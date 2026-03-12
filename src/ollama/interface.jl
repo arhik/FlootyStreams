@@ -1,10 +1,13 @@
-role(msg::OllamaMessage) = role.msg
-content(msg::OllamaMessage) = role.content
+FlootyAbstract.role(msg::OllamaMessage) = msg.role
+FlootyAbstract.content(msg::OllamaMessage) = msg.content
 
-create_message(provider::OllamaProvider, role::String, content::String; ) =
+FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String; ) =
     OllamaMessage(role=role, content=content)
 
-create_provider_instance(::Val{:ollama}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = OllamaProvider()
+FlootyAbstract.create_provider_instance(::Val{:ollama}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = OllamaProvider()
+
+FlootyAbstract.create_embedder(provider::OllamaProvider, model::String; kwargs...) =
+    OllamaEmbedder(provider, model)
 
 function create_stream(provider::OllamaProvider, model::String, messages::Vector{OllamaMessage},
     stream::Bool=false,

@@ -106,3 +106,38 @@ end
 
 StructTypes.StructType(::Type{ChatResponse}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ChatResponse}) = (:model, :created_at, :total_duration, :load_duration, :prompt_eval_count, :eval_count, :eval_duration)
+
+@kwdef struct EmbedRequest <: OllamaRequest
+    model::String = ""
+    input::Union{Vector{String}, String} = ""
+    options::Union{Dict{String,Any}, Nothing} = nothing
+end
+
+StructTypes.StructType(::Type{EmbedRequest}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{EmbedRequest}) = (:options,)
+
+struct EmbedResponse <: OllamaResponse
+    embeddings::Vector{Vector{Float64}}
+    model::Union{String, Nothing}
+end
+
+StructTypes.StructType(::Type{EmbedResponse}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{EmbedResponse}) = (:model,)
+
+# Embedder implementation for ContextManager
+using FlootyAbstract: AbstractEmbedder
+
+struct OllamaEmbedder <: AbstractEmbedder
+    provider::OllamaProvider
+    model::String
+end
+
+function FlootyAbstract.embed(embedder::OllamaEmbedder, text::String)
+    response = embed(embedder.provider, text, embedder.model)
+    return response.embeddings[1]
+end
+
+function FlootyAbstract.embed(embedder::OllamaEmbedder, texts::Vector{String})
+    response = embed(embedder.provider, texts, embedder.model)
+    return response.embeddings
+end

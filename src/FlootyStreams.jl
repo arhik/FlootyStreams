@@ -8,6 +8,6 @@ include("ollama/chat.jl")
 include("ollama/utils.jl")
 include("ollama/interface.jl")
 
-export create_message, create_provider_instance, create_stream
+export create_stream
 
 end # module FlootyStreams
