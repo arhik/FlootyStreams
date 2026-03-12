@@ -22,7 +22,7 @@ abstract type OllamaObject <: AbstractProviderObject end
 abstract type OllamaRequest <: OllamaObject end
 abstract type OllamaResponse <: OllamaObject end
 
-struct OllamaError <: Exception
+struct OllamaError <: AbstractFlootyError
     message::String
     status::Int
 end
@@ -31,7 +31,7 @@ StructTypes.StructType(::Type{OllamaError}) = StructTypes.Struct()
 
 Base.show(io::IO, e::OllamaError) = print(io, "OllamaError($(e.status)): $(e.message)")
 
-struct OllamaFunction
+struct OllamaFunction <: AbstractProviderObject
     name::String
     description::String
     parameters::OrderedDict{String,Any}
@@ -51,7 +51,7 @@ FlootyAbstract.tool_name(tool::OllamaTool) = tool.function_.name
 FlootyAbstract.tool_description(tool::OllamaTool) = tool.function_.description
 FlootyAbstract.tool_parameters(tool::OllamaTool) = tool.function_.parameters
 
-struct OllamaToolCallFunction
+struct OllamaToolCallFunction <: AbstractProviderObject
     name::String
     arguments::Dict{String,Any}
 end
@@ -70,7 +70,7 @@ FlootyAbstract.call_arguments(call::OllamaToolCall) = call.function_.arguments
 FlootyAbstract.call_id(::OllamaToolCall) = nothing
 
 
-struct ImageData end
+struct ImageData <: AbstractProviderObject end
 
 @kwdef struct OllamaMessage <: AbstractMessage
     role::String = "user"
