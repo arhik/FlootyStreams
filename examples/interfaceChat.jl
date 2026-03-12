@@ -1,12 +1,12 @@
 using FlootyStreams
-using FlootyStreams: OllamaMessage, chat, OllamaError, create_message
+using FlootyStreams: chat, OllamaError, create_message
 using FlootyStreams: create_provider_instance, create_stream
 
 provider = create_provider_instance(Val(:ollama))
 
 stream = false
 response = try
-    create_stream(provider, "qwen3.5:cloud", [create_message(provider, "user", "Hello, world!")])
+    create_stream(provider, "nemotron-3-nano:30b-cloud", [create_message(provider, "user", "Hello, world!")])
 catch e
     e
 end
@@ -19,7 +19,7 @@ end
 stream = true
 
 response = try
-    create_stream(provider, "qwen3.5:cloud", [create_message(provider, "user", "Hello, world!")], stream)
+    create_stream(provider, "nemotron-3-nano:30b-cloud", [create_message(provider, "user", "Hello, world!")], stream)
 catch e
     e
 end

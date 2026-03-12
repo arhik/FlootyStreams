@@ -9,10 +9,10 @@ FlootyAbstract.create_provider_instance(::Val{:ollama}; config::Dict{Symbol, Any
 FlootyAbstract.create_embedder(provider::OllamaProvider, model::String; kwargs...) =
     OllamaEmbedder(provider, model)
 
-function create_stream(provider::OllamaProvider, model::String, messages::Vector{OllamaMessage},
+function FlootyAbstract.create_stream(provider::OllamaProvider, model::String, messages::Vector{OllamaMessage},
     stream::Bool=false,
     format::Union{Nothing, OrderedDict}=nothing,
     options::Union{Nothing, Dict{String,Any}}=nothing,
-    tools::Vector{OrderedDict}=OrderedDict[])
+    tools::Union{Vector{OllamaTool}, Nothing}=nothing)
     chat(provider, messages, model, stream, format, options, tools)
 end

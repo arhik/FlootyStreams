@@ -1,10 +1,10 @@
 using FlootyStreams
-using FlootyStreams: OllamaMessage, chat, OllamaError
+using FlootyStreams: OllamaMessage, chat, OllamaError, OllamaProvider
 
 provider = OllamaProvider()
 
 response = try
-    chat(provider,  [OllamaMessage(role="user", content="Hello, world!")], "qwen3.5:cloud")
+    chat(provider,  [OllamaMessage(role="user", content="Hello, world!")], "nemotron-3-nano:30b-cloud")
 catch e
     e
 end

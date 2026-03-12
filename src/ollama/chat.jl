@@ -74,7 +74,7 @@ function chat(provider::OllamaProvider, messages::Vector{OllamaMessage},
               stream::Bool=false,
               format::Union{Nothing, OrderedDict}=nothing,
               options::Union{Nothing, Dict{String,Any}}=nothing,
-              tools::Vector{OrderedDict}=OrderedDict[]
+              tools::Union{Vector{OllamaTool}, Nothing}=nothing
 )
     request = ChatRequest(
         model=model,

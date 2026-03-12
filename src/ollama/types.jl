@@ -2,7 +2,7 @@ import StructTypes
 using JSON3
 using OrderedCollections
 
-using FlootyAbstract: AbstractProviderObject, AbstractLLMProvider, AbstractMessage
+using FlootyAbstract: AbstractProviderObject, AbstractLLMProvider, AbstractMessage, AbstractTool
 
 # absract/provider.jl - OllamaProvider implementation
 
@@ -31,6 +31,45 @@ StructTypes.StructType(::Type{OllamaError}) = StructTypes.Struct()
 
 Base.show(io::IO, e::OllamaError) = print(io, "OllamaError($(e.status)): $(e.message)")
 
+struct OllamaFunction
+    name::String
+    description::String
+    parameters::OrderedDict{String,Any}
+end
+
+StructTypes.StructType(::Type{OllamaFunction}) = StructTypes.Struct()
+
+struct OllamaTool <: AbstractTool
+    type::String
+    function_::OllamaFunction
+end
+
+StructTypes.StructType(::Type{OllamaTool}) = StructTypes.Struct()
+StructTypes.names(::Type{OllamaTool}) = ((:function_, :function),)
+
+FlootyAbstract.tool_name(tool::OllamaTool) = tool.function_.name
+FlootyAbstract.tool_description(tool::OllamaTool) = tool.function_.description
+FlootyAbstract.tool_parameters(tool::OllamaTool) = tool.function_.parameters
+
+struct OllamaToolCallFunction
+    name::String
+    arguments::Dict{String,Any}
+end
+
+StructTypes.StructType(::Type{OllamaToolCallFunction}) = StructTypes.Struct()
+
+struct OllamaToolCall <: AbstractToolCall
+    function_::OllamaToolCallFunction
+end
+
+StructTypes.StructType(::Type{OllamaToolCall}) = StructTypes.Struct()
+StructTypes.names(::Type{OllamaToolCall}) = ((:function_, :function),)
+
+FlootyAbstract.call_name(call::OllamaToolCall) = call.function_.name
+FlootyAbstract.call_arguments(call::OllamaToolCall) = call.function_.arguments
+FlootyAbstract.call_id(::OllamaToolCall) = nothing
+
+
 struct ImageData end
 
 @kwdef struct OllamaMessage <: AbstractMessage
@@ -38,7 +77,7 @@ struct ImageData end
     content::Union{String, Nothing} = nothing
     thinking::Union{String, Nothing} = nothing
     images::Union{Vector{ImageData}, Nothing} = nothing
-    tool_calls::Union{Vector{Dict{String,Any}}, Nothing} = nothing
+    tool_calls::Union{Vector{OllamaToolCall}, Nothing} = nothing
     tool_name::Union{String, Nothing} = nothing
 end
 
@@ -68,7 +107,7 @@ StructTypes.omitempties(::Type{GenerateRequest}) = (:prompt, :system, :template,
     stream::Bool = false
     format::Union{OrderedDict, Nothing} = nothing
     options::Union{Dict{String,Any}, Nothing} = nothing
-    tools::Union{Vector{OrderedDict}, Nothing} = nothing
+    tools::Union{Vector{OllamaTool}, Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{ChatRequest}) = StructTypes.Struct()
