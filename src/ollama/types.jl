@@ -6,7 +6,7 @@ using FlootyAbstract: AbstractProviderObject, AbstractLLMProvider, AbstractMessa
 
 # absract/provider.jl - OllamaProvider implementation
 
-struct OllamaProvider <: AbstractLLMProvider
+mutable struct OllamaProvider <: AbstractLLMProvider
     baseURL::String
     timeout::Int64
 
@@ -14,6 +14,8 @@ struct OllamaProvider <: AbstractLLMProvider
         new(rstrip(baseURL, '/'), timeout)
     end
 end
+
+StructTypes.StructType(::Type{OllamaProvider}) = StructTypes.Mutable()
 
 # Core type definitions for OllamaJL
 
