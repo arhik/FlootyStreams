@@ -6,6 +6,16 @@ FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::S
 
 FlootyAbstract.create_provider_instance(::Val{:ollama}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = OllamaProvider()
 
+FlootyAbstract.provider_name(provider::OllamaProvider) = :ollama
+
+function FlootyAbstract.list_provider_models(::Val{:ollama}, config::Dict{Symbol,Any})
+    baseURL = get(config, :baseURL, "http://localhost:11434")
+    timeout = get(config, :timeout, 120)
+    provider = OllamaProvider(; baseURL=baseURL, timeout=timeout)
+    response = list(provider)
+    return response.models
+end
+
 FlootyAbstract.create_embedder(provider::OllamaProvider, model::String; kwargs...) =
     OllamaEmbedder(provider, model)
 

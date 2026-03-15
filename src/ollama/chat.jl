@@ -194,7 +194,8 @@ end
 
 function list(provider::OllamaProvider)
    try
-        return _request(provider, "GET", "/api/tags")
+        response_data = _request(provider, "GET", "/api/tags")
+        return JSON3.read(JSON3.write(response_data), ListModelsResponse)
    catch e
         rethrow(e)
    end
