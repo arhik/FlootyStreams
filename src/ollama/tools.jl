@@ -78,10 +78,34 @@ function ls_tool()::AbstractTool
     build_tool("ls", "List files and directories", params)
 end
 
-# Tool Handlers Implementation
+function shell_tool()::AbstractTool
+    params = OrderedDict{String,Any}(
+        "type" => "object",
+        "properties" => OrderedDict{String,Any}(
+            "command" => OrderedDict{String,Any}(
+                "type" => "string",
+                "description" => "Shell command to execute: ls, pwd, cd, grep, cat, etc."
+            ),
+            "args" => OrderedDict{String,Any}(
+                "type" => "array",
+                "items" => OrderedDict{String,Any}("type" => "string"),
+                "description" => "Command arguments (optional)"
+            )
+        ),
+        "required" => ["command"]
+    )
+    build_tool("shell", "Execute shell command and return output", params)
+end
+
+# Tool Handlers Implementation with stdout capture
+
+using IOCapture
 
 function handle_pwd(args::Dict{String,Any}; context=nothing)
-    FlootyAbstract.ToolResult(pwd())
+    c = IOCapture.capture() do
+        println(pwd())
+    end
+    FlootyAbstract.ToolResult(c.output)
 end
 
 function handle_ls(args::Dict{String,Any}; context=nothing)
@@ -89,8 +113,33 @@ function handle_ls(args::Dict{String,Any}; context=nothing)
     if !isdir(path)
         return FlootyAbstract.ToolResult(false, "", "Not a directory: $path")
     end
-    files = join(readdir(path), "\n")
-    FlootyAbstract.ToolResult(files)
+    
+    c = IOCapture.capture() do
+        # Use ls -l on Unix for detailed listing
+        @static if Sys.isunix()
+            run(`ls -l $path`)
+        else
+            # Fallback for Windows
+            for file in readdir(path)
+                println(file)
+            end
+        end
+    end
+    FlootyAbstract.ToolResult(c.output)
+end
+
+function handle_shell(args::Dict{String,Any}; context=nothing)
+    command = args["command"]
+    
+    c = IOCapture.capture() do
+        try
+            run(`sh -c $command`)
+        catch e
+            println(stderr, "Error: $e")
+        end
+    end
+    
+    FlootyAbstract.ToolResult(c.output)
 end
 
 function handle_read(args::Dict{String,Any}; context=nothing)
@@ -99,45 +148,56 @@ function handle_read(args::Dict{String,Any}; context=nothing)
         return FlootyAbstract.ToolResult(false, "", "File not found: $path")
     end
     
-    start_line = get(args, "start_line", nothing)
-    end_line = get(args, "end_line", nothing)
-    
-    if start_line === nothing
-        # Read entire file
-        content = read(path, String)
-        return FlootyAbstract.ToolResult(content)
-    else
-        # Read specific lines
-        lines = readlines(path)
-        start_idx = max(1, start_line)
-        end_idx = end_line === nothing ? length(lines) : min(end_line, length(lines))
-        selected = join(lines[start_idx:end_idx], "\n")
-        return FlootyAbstract.ToolResult(selected)
+    c = IOCapture.capture() do
+        start_line = get(args, "start_line", nothing)
+        end_line = get(args, "end_line", nothing)
+        
+        if start_line === nothing
+            # Read entire file
+            print(read(path, String))
+        else
+            # Read specific lines
+            lines = readlines(path)
+            start_idx = max(1, start_line)
+            end_idx = end_line === nothing ? length(lines) : min(end_line, length(lines))
+            for line in lines[start_idx:end_idx]
+                println(line)
+            end
+        end
     end
+    
+    FlootyAbstract.ToolResult(c.output)
 end
 
 function handle_write(args::Dict{String,Any}; context=nothing)
     path = args["path"]
     content = args["content"]
-    start_line = get(args, "start_line", nothing)
-    end_line = get(args, "end_line", nothing)
     
-    if start_line === nothing
-        # Write entire file
-        write(path, content)
-    else
-        # Replace specific lines
-        if !isfile(path)
-            return FlootyAbstract.ToolResult(false, "", "File not found for editing: $path")
+    c = IOCapture.capture() do
+        start_line = get(args, "start_line", nothing)
+        end_line = get(args, "end_line", nothing)
+        
+        if start_line === nothing
+            # Write entire file
+            write(path, content)
+            println("Written to $path")
+        else
+            # Replace specific lines
+            if !isfile(path)
+                println(stderr, "File not found for editing: $path")
+                return
+            end
+            lines = readlines(path)
+            start_idx = max(1, start_line)
+            end_idx = end_line === nothing ? length(lines) : min(end_line, length(lines))
+            new_content_lines = split(content, '\n')
+            new_lines = vcat(lines[1:start_idx-1], new_content_lines, lines[end_idx+1:end])
+            write(path, join(new_lines, "\n"))
+            println("Updated $path")
         end
-        lines = readlines(path)
-        start_idx = max(1, start_line)
-        end_idx = end_line === nothing ? length(lines) : min(end_line, length(lines))
-        new_content_lines = split(content, '\n')
-        new_lines = vcat(lines[1:start_idx-1], new_content_lines, lines[end_idx+1:end])
-        write(path, join(new_lines, "\n"))
     end
-    FlootyAbstract.ToolResult("Written to $path")
+    
+    FlootyAbstract.ToolResult(c.output)
 end
 
 function __init__()
@@ -145,4 +205,5 @@ function __init__()
     FlootyAbstract.register_tool_handler!("ls", handle_ls)
     FlootyAbstract.register_tool_handler!("read", handle_read)
     FlootyAbstract.register_tool_handler!("write", handle_write)
+    FlootyAbstract.register_tool_handler!("shell", handle_shell)
 end
