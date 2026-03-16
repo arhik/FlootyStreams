@@ -3,7 +3,7 @@ using JSON3
 using OrderedCollections
 using Base64
 
-using FlootyAbstract: AbstractProviderObject, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, model_name, model_provider
+using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, model_name, model_provider
 
 # absract/provider.jl - OllamaProvider implementation
 
@@ -97,6 +97,31 @@ end
 StructTypes.StructType(::Type{ImageData}) = StructTypes.StringType()
 
 Base.string(img::ImageData) = img.data
+
+# ImageAttachment - stores file path and loads ImageData on demand
+struct ImageAttachment <: AbstractAttachment
+    path::String
+    mime::String
+    _data::Ref{Union{ImageData, Nothing}}  # Lazy-loaded base64 data
+    
+    function ImageAttachment(path::String, mime::String="image/png")
+        isfile(path) || throw(ArgumentError("File not found: $path"))
+        new(path, mime, Ref{Union{ImageData, Nothing}}(nothing))
+    end
+end
+
+# Attachment interface implementation
+FlootyAbstract.attachment_path(att::ImageAttachment) = att.path
+FlootyAbstract.attachment_type(att::ImageAttachment) = :image
+FlootyAbstract.attachment_mime(att::ImageAttachment) = att.mime
+
+# Lazy load the ImageData
+function get_image_data(att::ImageAttachment)
+    if att._data[] === nothing
+        att._data[] = ImageData(att.path)
+    end
+    att._data[]
+end
 
 @kwdef struct OllamaMessage <: AbstractMessage
     role::String = "user"

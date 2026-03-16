@@ -4,8 +4,21 @@ FlootyAbstract.content(msg::OllamaMessage) = msg.content
 FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String; kwargs...) =
     OllamaMessage(role=role, content=content)
 
-FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String, images::Vector{ImageData}; kwargs...) =
-    OllamaMessage(role=role, content=content, images=images)
+FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String, images::Vector{<:AbstractProviderObject}; kwargs...) =
+    OllamaMessage(role=role, content=content, images=convert(Vector{ImageData}, images))
+
+# New interface: create message with attachments (ImageAttachment, etc.)
+FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment}; kwargs...) =
+    OllamaMessage(role=role, content=content, images=[get_image_data(att) for att in attachments])
+
+FlootyAbstract.create_image_data(provider::OllamaProvider, data::Union{String, Vector{UInt8}}) =
+    ImageData(data)
+
+FlootyAbstract.images(msg::OllamaMessage) = msg.images
+
+# Create ImageAttachment objects from file paths
+FlootyAbstract.create_attachments(provider::OllamaProvider, paths::Vector{String}, mime_types::Vector{String}) =
+    [ImageAttachment(path, mime) for (path, mime) in zip(paths, mime_types)]
 
 FlootyAbstract.create_provider_instance(::Val{:ollama}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = OllamaProvider()
 

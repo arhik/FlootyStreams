@@ -5,6 +5,7 @@ using JSON3
 function _request(provider::OllamaProvider, method::String, endpoint::String, body=nothing; stream::Bool=false)
     url = string(provider.baseURL, endpoint)
     headers = ["Content-Type" => "application/json"]
+    
     try
         if stream
             return Channel(Inf) do channel
