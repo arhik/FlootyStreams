@@ -1,6 +1,7 @@
 import StructTypes
 using JSON3
 using OrderedCollections
+using Base64
 
 using FlootyAbstract: AbstractProviderObject, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, model_name, model_provider
 
@@ -72,7 +73,30 @@ FlootyAbstract.call_arguments(call::OllamaToolCall) = call.function_.arguments
 FlootyAbstract.call_id(::OllamaToolCall) = nothing
 
 
-struct ImageData <: AbstractProviderObject end
+struct ImageData <: AbstractProviderObject
+    data::String
+
+    function ImageData(data::Union{String, Vector{UInt8}, AbstractString})
+        if data isa AbstractString
+            if isfile(data)
+                return new(Base64.base64encode(read(data)))
+            else
+                try
+                    Base64.base64decode(data)
+                    return new(String(data))
+                catch
+                    throw(ArgumentError("Invalid image data: must be a valid file path or base64 string"))
+                end
+            end
+        else
+            new(Base64.base64encode(data))
+        end
+    end
+end
+
+StructTypes.StructType(::Type{ImageData}) = StructTypes.StringType()
+
+Base.string(img::ImageData) = img.data
 
 @kwdef struct OllamaMessage <: AbstractMessage
     role::String = "user"
