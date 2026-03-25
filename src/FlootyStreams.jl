@@ -1,6 +1,7 @@
 module FlootyStreams
 
 using FlootyAbstract
+using FlootyBase: ToolParameter
 using StructTypes
 
 # Ollama

@@ -37,10 +37,10 @@ Base.show(io::IO, e::OllamaError) = print(io, "OllamaError($(e.status)): $(e.mes
 struct OllamaFunction <: AbstractProviderObject
     name::String
     description::String
-    parameters::OrderedDict{String,Any}
+    parameters::Vector{ToolParameter}
 end
 
-StructTypes.StructType(::Type{OllamaFunction}) = StructTypes.Struct()
+StructTypes.StructType(::Type{OllamaFunction}) = StructTypes.CustomStruct()
 
 struct OllamaTool <: AbstractTool
     type::String
