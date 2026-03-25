@@ -58,7 +58,7 @@ function FlootyAbstract.chat_stream(provider::OllamaProvider, model::String, mes
     ollama_tools = if tools === nothing
         nothing
     else
-        map(t -> build_tool(t, provider), tools)
+        map(t -> FlootyAbstract.build_tool(t, provider), tools)
     end
     chat(provider, ollama_messages, model, stream, format, options, ollama_tools)
 end
