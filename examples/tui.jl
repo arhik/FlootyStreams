@@ -10,7 +10,8 @@ using Tachikoma
 using FlootyStreams
 using FlootyContextManager
 using FlootyAbstract: create_provider_instance, create_message, execute_tool, call_name, call_arguments, ToolError, AbstractFlootyError, AbstractProviderObject
-using FlootyStreams: pwd_tool, ls_tool, read_tool, write_tool, ImageData
+using FlootyBase: pwd_tool, ls_tool, read_tool, write_tool
+using FlootyStreams: ImageData
 using CommonMark
 using Dates
 using JSON3
