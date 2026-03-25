@@ -54,7 +54,11 @@ function FlootyAbstract.chat_stream(provider::OllamaProvider, model::String, mes
     tools::Union{Vector{<:AbstractTool}, Nothing}=nothing)
     # Convert AbstractMessage to OllamaMessage
     ollama_messages = [m isa OllamaMessage ? m : OllamaMessage(role=role(m), content=content(m)) for m in messages]
-    # Tools should already be OllamaTool from FlootyAgents
-    ollama_tools = tools === nothing ? nothing : convert(Vector{OllamaTool}, tools)
+    # Convert tools to OllamaTool using build_tool
+    ollama_tools = if tools === nothing
+        nothing
+    else
+        map(t -> build_tool(t, provider), tools)
+    end
     chat(provider, ollama_messages, model, stream, format, options, ollama_tools)
 end
