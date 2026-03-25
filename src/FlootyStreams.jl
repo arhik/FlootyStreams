@@ -18,7 +18,6 @@ StructTypes.subtypes(::Type{AbstractMessage}) = (
 )
 
 export create_stream
-export build_tool, pwd_tool, read_tool, write_tool, ls_tool
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment
 export AbstractFlootyError, ToolError
 

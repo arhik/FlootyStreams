@@ -9,11 +9,12 @@
 using Tachikoma
 using FlootyStreams
 using FlootyContextManager
-using FlootyAbstract: create_provider_instance, create_message, execute_tool, call_name, call_arguments, ToolError, AbstractFlootyError
-using FlootyStreams: pwd_tool, ls_tool, read_tool, write_tool
+using FlootyAbstract: create_provider_instance, create_message, execute_tool, call_name, call_arguments, ToolError, AbstractFlootyError, AbstractProviderObject
+using FlootyStreams: pwd_tool, ls_tool, read_tool, write_tool, ImageData
 using CommonMark
 using Dates
 using JSON3
+using HTTP
 
 @tachikoma_app
 
@@ -103,6 +104,13 @@ function _word_wrap(text::AbstractString, width::Int)
     return lines
 end
 
+struct Attachment
+    path::String
+    is_url::Bool
+    loaded::Bool
+    data::Union{FlootyStreams.ImageData, Nothing}
+end
+
 @kwdef mutable struct ChatModel <: Model
     quit::Bool = false
     tick::Int = 0
@@ -117,6 +125,9 @@ end
     focus::Int = 2
     auto_scroll::Bool = true
     tool_iteration::Int = 0
+    attachments::Vector{Attachment} = Attachment[]
+    attachment_mode::Bool = false
+    attachment_input::TextInput = TextInput(text="", focused=true, tick=0)
 end
 
 should_quit(m::ChatModel) = m.quit
@@ -131,6 +142,11 @@ function update!(m::ChatModel, evt::Event)
 end
 
 function _handle_key!(m::ChatModel, evt::KeyEvent)
+    if m.attachment_mode
+        _handle_attachment_key!(m, evt)
+        return
+    end
+
     if (evt.key == :char && evt.char == '\x03') || evt.key == :escape
         m.quit = true
         return
@@ -161,6 +177,12 @@ function _handle_key!(m::ChatModel, evt::KeyEvent)
     end
 
     if m.focus == 2
+        if evt.key == :char && evt.char == '@'
+            m.attachment_mode = true
+            empty!(m.attachment_input.buffer)
+            m.attachment_input.cursor = 0
+            return
+        end
         handled = handle_key!(m.input, evt)
         if !handled && (String(m.input.buffer) |> strip |> !isempty) &&
            (evt.key == :enter || (evt.key == :char && evt.char == '\n'))
@@ -173,6 +195,25 @@ function _handle_key!(m::ChatModel, evt::KeyEvent)
         m.input.focused = true
         handle_key!(m.input, evt)
     end
+end
+
+function _handle_attachment_key!(m::ChatModel, evt::KeyEvent)
+    if evt.key == :escape
+        m.attachment_mode = false
+        return
+    end
+    
+    if evt.key == :enter || (evt.key == :char && evt.char == '\n')
+        path = String(strip(String(m.attachment_input.buffer)))
+        if !isempty(path)
+            is_url = startswith(path, "http://") || startswith(path, "https://")
+            push!(m.attachments, Attachment(path, is_url, false, nothing))
+        end
+        m.attachment_mode = false
+        return
+    end
+    
+    handle_key!(m.attachment_input, evt)
 end
 
 function _execute_tool_with_retry(tool_name_str::String, args::Dict; max_retries::Int=MAX_TOOL_RETRIES)
@@ -276,11 +317,33 @@ end
 
 function _send_message!(m::ChatModel)
     text = String(strip(String(m.input.buffer)))
-    isempty(text) && return
+    isempty(text) && isempty(m.attachments) && return
 
-    add_message!(m.store, create_message(m.provider, "user", text))
+    images = ImageData[]
+    for att in m.attachments
+        try
+            if att.is_url
+                resp = HTTP.get(att.path)
+                img = ImageData(resp.body)
+                push!(images, img)
+            else
+                img = ImageData(att.path)
+                push!(images, img)
+            end
+        catch e
+            @warn "Failed to load image: $(att.path) - $e"
+        end
+    end
+
+    if isempty(images)
+        add_message!(m.store, create_message(m.provider, "user", text))
+    else
+        add_message!(m.store, create_message(m.provider, "user", text, images))
+    end
+    
     empty!(m.input.buffer)
     m.input.cursor = 0
+    empty!(m.attachments)
     _update_widgets!(m)
 
     m.is_streaming = true
@@ -374,7 +437,8 @@ end
 
 # Forward declarations for view function
 _view_layout(m::ChatModel, f::Frame) = begin
-    input_height = 3
+    attachment_lines = isempty(m.attachments) ? 0 : 1
+    input_height = 3 + attachment_lines
     separator_height = 1
     chat_height = max(0, f.area.height - input_height - separator_height)
     
@@ -443,7 +507,11 @@ function view(m::ChatModel, f::Frame)
     _render_input_area!(m, buf, input_area)
 
     # Status bar
-    status_text = m.is_streaming ? "Streaming..." : "$(m.model_name) | Tools: pwd, ls, read, write | Ctrl+C to quit"
+    if m.attachment_mode
+        status_text = "Enter image URL or path, Esc to cancel"
+    else
+        status_text = m.is_streaming ? "Streaming..." : "$(m.model_name) | Tools: pwd, ls, read, write | @ for image | Ctrl+C to quit"
+    end
     focus_hint = m.focus == 1 ? " [Tab: input] " : " [Tab: chat] "
     status_text *= focus_hint
     status_x = input_area.x + max(0, (input_area.width - length(status_text)) ÷ 2)
@@ -496,13 +564,31 @@ function _render_input_area!(m::ChatModel, buf::Buffer, area::Rect)
     input_h = area.height - 1
     input_h > 0 || return
 
-    prompt = "› "
-    set_string!(buf, area.x, area.y, prompt, GREY_DIM)
-
-    input_area_inner = Rect(area.x + 2, area.y, area.width - 2, input_h)
-    m.input.focused = true
-    m.input.tick = m.tick
-    render(m.input, input_area_inner, buf)
+    y_offset = area.y
+    
+    if !isempty(m.attachments)
+        att_style = Style(fg=ColorRGB(100, 200, 255))
+        att_text = "📎 " * join([basename(att.path) for att in m.attachments], ", ")
+        set_string!(buf, area.x, y_offset, att_text, att_style; max_x=right(area))
+        y_offset += 1
+        input_h -= 1
+    end
+    
+    if m.attachment_mode
+        prompt = "@ "
+        set_string!(buf, area.x, y_offset, prompt, Style(fg=ColorRGB(255, 200, 100)))
+        input_area_inner = Rect(area.x + 2, y_offset, area.width - 2, 1)
+        m.attachment_input.focused = true
+        m.attachment_input.tick = m.tick
+        render(m.attachment_input, input_area_inner, buf)
+    else
+        prompt = "› "
+        set_string!(buf, area.x, y_offset, prompt, GREY_DIM)
+        input_area_inner = Rect(area.x + 2, y_offset, area.width - 2, input_h)
+        m.input.focused = true
+        m.input.tick = m.tick
+        render(m.input, input_area_inner, buf)
+    end
 end
 
 function flooty_chat(; model_name::String="nemotron-3-nano:30b-cloud", theme_name=nothing)
