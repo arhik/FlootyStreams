@@ -15,6 +15,7 @@ FlootyAbstract.create_image_data(provider::OllamaProvider, data::Union{String, V
     ImageData(data)
 
 FlootyAbstract.images(msg::OllamaMessage) = msg.images
+FlootyAbstract.tool_calls(msg::OllamaMessage) = msg.tool_calls
 
 # Create ImageAttachment objects from file paths
 FlootyAbstract.create_attachments(provider::OllamaProvider, paths::Vector{String}, mime_types::Vector{String}) =
