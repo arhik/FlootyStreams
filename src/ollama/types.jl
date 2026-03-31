@@ -138,6 +138,7 @@ end
 
 StructTypes.StructType(::Type{OllamaMessage}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{OllamaMessage}) = (:content, :thinking, :images, :tool_calls, :tool_name)
+StructTypes.defaults(::Type{OllamaMessage}) = (role = "user", _type = "OllamaMessage")
 
 # Custom serialization: images as base64 strings for Ollama API compatibility
 function StructTypes.lower(msg::OllamaMessage)
