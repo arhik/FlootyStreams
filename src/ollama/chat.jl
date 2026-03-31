@@ -196,7 +196,7 @@ end
 function list(provider::OllamaProvider)
    try
         response_data = _request(provider, "GET", "/api/tags")
-        return JSON3.read(JSON3.write(response_data), ListModelsResponse)
+        return JSON3.read(JSON3.write(response_data), FlootyBase.ListModelsResponse{Vector{OllamaModel}})
    catch e
         rethrow(e)
    end

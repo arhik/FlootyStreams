@@ -106,7 +106,7 @@ struct ImageAttachment <: AbstractAttachment
     path::String
     mime::String
     _data::Ref{Union{ImageData, Nothing}}  # Lazy-loaded base64 data
-    
+
     function ImageAttachment(path::String, mime::String="image/png")
         isfile(path) || throw(ArgumentError("File not found: $path"))
         new(path, mime, Ref{Union{ImageData, Nothing}}(nothing))
@@ -243,7 +243,7 @@ end
 StructTypes.StructType(::Type{ModelDetails}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ModelDetails}) = (:families,)
 
-@kwdef struct ModelInfo <: AbstractModel
+@kwdef struct OllamaModel <: AbstractModel
     name::String
     model::String
     modified_at::String
@@ -254,34 +254,18 @@ StructTypes.omitempties(::Type{ModelDetails}) = (:families,)
     remote_host::Union{String, Nothing} = nothing
 end
 
-StructTypes.StructType(::Type{ModelInfo}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{ModelInfo}) = (:remote_model, :remote_host)
+StructTypes.StructType(::Type{OllamaModel}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{OllamaModel}) = (:remote_model, :remote_host)
 
-FlootyAbstract.model_name(model::ModelInfo) = model.name
-FlootyAbstract.model_provider(model::ModelInfo) = :ollama
+FlootyAbstract.model_name(model::OllamaModel) = model.name
+FlootyAbstract.model_provider(model::OllamaModel) = :ollama
 
-function Base.show(io::IO, model::ModelInfo)
-    print(io, "ModelInfo(", model.name, ")")
+function Base.show(io::IO, model::OllamaModel)
+    print(io, "OllamaModel(", model.name, ")")
     isempty(model.details.family) || print(io, " family=", model.details.family)
     isempty(model.details.parameter_size) || print(io, " params=", model.details.parameter_size)
     print(io, " size=", model.size, " bytes")
     !isnothing(model.remote_model) && print(io, " [remote]")
-end
-
-@kwdef struct ListModelsResponse
-    models::Vector{ModelInfo}
-end
-
-StructTypes.StructType(::Type{ListModelsResponse}) = StructTypes.Struct()
-
-function Base.show(io::IO, response::ListModelsResponse)
-    println(io, "ListModelsResponse(", length(response.models), " models):")
-    for (i, model) in enumerate(response.models)
-        print(io, "  ", i, ". ", model.name)
-        print(io, " (", model.details.family)
-        isempty(model.details.parameter_size) || print(io, ", ", model.details.parameter_size)
-        println(io, ")")
-    end
 end
 
 # Embedder implementation for ContextManager
