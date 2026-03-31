@@ -112,11 +112,10 @@ const OpenAIMessageContent = Union{String, Vector{<:AbstractProviderObject}}
     tool_calls::Union{Vector{OpenAIToolCall}, Nothing} = nothing
     tool_call_id::Union{String, Nothing} = nothing
     name::Union{String, Nothing} = nothing
-    _type::String = "OpenAIMessage"
 end
 
 StructTypes.StructType(::Type{OpenAIMessage}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{OpenAIMessage}) = (:content, :tool_calls, :tool_call_id, :name, :_type)
+StructTypes.omitempties(::Type{OpenAIMessage}) = (:content, :tool_calls, :tool_call_id, :name)
 
 # Custom serialization for OpenAI API format
 function StructTypes.lower(msg::OpenAIMessage)
@@ -265,11 +264,6 @@ struct OpenAIModel <: AbstractModel
     object::String
     created::Int
     owned_by::String
-    _type::String
-    
-    function OpenAIModel(id::String, object::String, created::Int, owned_by::String)
-        new(id, object, created, owned_by, "OpenAIModel")
-    end
 end
 
 StructTypes.StructType(::Type{OpenAIModel}) = StructTypes.Struct()
