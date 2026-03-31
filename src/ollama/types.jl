@@ -133,6 +133,7 @@ end
     images::Union{Vector{ImageData}, Nothing} = nothing
     tool_calls::Union{Vector{OllamaToolCall}, Nothing} = nothing
     tool_name::Union{String, Nothing} = nothing
+    _type::String = "OllamaMessage"
 end
 
 StructTypes.StructType(::Type{OllamaMessage}) = StructTypes.Struct()
@@ -140,7 +141,10 @@ StructTypes.omitempties(::Type{OllamaMessage}) = (:content, :thinking, :images, 
 
 # Custom serialization: images as base64 strings for Ollama API compatibility
 function StructTypes.lower(msg::OllamaMessage)
-    d = Dict{String,Any}("role" => msg.role)
+    d = Dict{String,Any}(
+        "role" => msg.role,
+        "_type" => "OllamaMessage"  # Include type discriminator
+    )
     msg.content !== nothing && !isempty(msg.content) && (d["content"] = msg.content)
     msg.thinking !== nothing && (d["thinking"] = msg.thinking)
     if msg.images !== nothing && !isempty(msg.images)

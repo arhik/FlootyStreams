@@ -21,22 +21,6 @@ include("openai/interface.jl")
 # Chutes (OpenAI-compatible)
 include("openai/chutes.jl")
 
-# StructTypes configuration for AbstractMessage
-StructTypes.StructType(::Type{AbstractMessage}) = StructTypes.AbstractType()
-StructTypes.subtypekey(::Type{AbstractMessage}) = :_type
-StructTypes.subtypes(::Type{AbstractMessage}) = (
-    OllamaMessage=OllamaMessage,
-    OpenAIMessage=OpenAIMessage,
-)
-
-# StructTypes configuration for AbstractModel
-StructTypes.StructType(::Type{AbstractModel}) = StructTypes.AbstractType()
-StructTypes.subtypekey(::Type{AbstractModel}) = :_type
-StructTypes.subtypes(::Type{AbstractModel}) = (
-    OllamaModel=OllamaModel,
-    OpenAIModel=OpenAIModel,
-)
-
 export create_stream
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment
 export OllamaModel
@@ -45,5 +29,15 @@ export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
 export AbstractFlootyError, ToolError
+
+# ═══════════════════════════════════════════════════════════════════════
+# Register message/model subtypes with FlootyBase for JSON deserialization
+# ═══════════════════════════════════════════════════════════════════════
+function __init__()
+    FlootyBase.register_message_subtype!(:OllamaMessage, OllamaMessage)
+    FlootyBase.register_message_subtype!(:OpenAIMessage, OpenAIMessage)
+    FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
+    FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)
+end
 
 end # module FlootyStreams
