@@ -46,41 +46,48 @@ function openai_tool_parameters_to_dict(params::OrderedDict{String,Any})
     params
 end
 
-# Custom serialization for OpenAIFunction to output OrderedDict format
-# that OpenAI API expects
 function StructTypes.lower(x::OpenAIFunction)
-    OrderedDict{String,Any}(
-        "name" => x.name,
-        "description" => x.description,
-        "parameters" => x.parameters
-    )
+    if x.arguments !== nothing
+        OrderedDict{String,Any}(
+            "name" => x.name,
+            "arguments" => x.arguments
+        )
+    else
+        OrderedDict{String,Any}(
+            "name" => x.name,
+            "description" => x.description,
+            "parameters" => x.parameters
+        )
+    end
 end
 
 function StructTypes.construct(::Type{OpenAIFunction}, x::OrderedDict{String,Any})
-    # Extract ToolParameter vector from the dict format
-    params_dict = get(x, "parameters", OrderedDict{String,Any}())
-    props = get(params_dict, "properties", OrderedDict{String,Any}())
-    req_list = get(params_dict, "required", String[])
-    
-    params = ToolParameter[]
-    for (name, info) in props
-        push!(params, ToolParameter(
-            name,
-            get(info, "type", "string"),
-            get(info, "description", ""),
-            required = name in req_list
-        ))
+    name = get(x, "name", "")
+    if haskey(x, "arguments")
+        args_str = x["arguments"]
+        args_dict = try JSON3.read(args_str, OrderedDict{String,Any}) catch _ OrderedDict{String,Any}() end
+        return OpenAIFunction(name, nothing, args_dict, args_str)
+    else
+        params_dict = get(x, "parameters", OrderedDict{String,Any}())
+        props = get(params_dict, "properties", OrderedDict{String,Any}())
+        req_list = get(params_dict, "required", String[])
+        
+        params = ToolParameter[]
+        for (n, info) in props
+            push!(params, ToolParameter(
+                n,
+                get(info, "type", "string"),
+                get(info, "description", ""),
+                required = n in req_list
+            ))
+        end
+        
+        parameters = OrderedDict{String,Any}(
+            "type" => "object",
+            "properties" => props,
+            "required" => req_list
+        )
+        
+        return OpenAIFunction(name, get(x, "description", nothing), parameters, nothing)
     end
-    
-    parameters = OrderedDict{String,Any}(
-        "type" => "object",
-        "properties" => props,
-        "required" => req_list
-    )
-    
-    OpenAIFunction(
-        get(x, "name", ""),
-        get(x, "description", ""),
-        parameters
-    )
 end

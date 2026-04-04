@@ -3,7 +3,7 @@ using JSON3
 using OrderedCollections
 using Base64
 
-using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractToolCall, AbstractModel, model_name, model_provider
+using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractToolCall, AbstractModel, model_name, model_provider, AbstractChatResponse, response_message
 
 # OpenAI Provider implementation
 # OpenAI is the canonical OpenAI-compatible provider
@@ -23,7 +23,7 @@ StructTypes.StructType(::Type{OpenAIProvider}) = StructTypes.Mutable()
 # Base types for the type system
 abstract type OpenAIObject <: AbstractProviderObject end
 abstract type OpenAIRequest <: OpenAIObject end
-abstract type OpenAIResponse <: OpenAIObject end
+abstract type OpenAIResponse <: AbstractChatResponse end
 
 struct OpenAIError <: AbstractFlootyError
     message::String
@@ -35,13 +35,30 @@ StructTypes.StructType(::Type{OpenAIError}) = StructTypes.Struct()
 
 Base.show(io::IO, e::OpenAIError) = print(io, "OpenAIError($(e.status)): $(e.type) - $(e.message)")
 
-struct OpenAIFunction <: AbstractProviderObject
+mutable struct OpenAIFunction <: AbstractProviderObject
     name::String
-    description::String
-    parameters::OrderedDict{String,Any}
+    description::Union{String,Nothing}
+    parameters::Union{OrderedDict{String,Any},Nothing}
+    arguments::Union{String,Nothing}
 end
 
+OpenAIFunction(name::String, desc::Union{String,Nothing}, params::Union{OrderedDict{String,Any},Nothing}) = OpenAIFunction(name, desc, params, nothing)
+
 StructTypes.StructType(::Type{OpenAIFunction}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{OpenAIFunction}) = (:description, :parameters, :arguments)
+
+function StructTypes.construct(::Type{OpenAIFunction}, x::Dict)
+    name = get(x, "name", "")
+    if haskey(x, "arguments")
+        args_str = x["arguments"]
+        args_dict = try JSON3.read(args_str, OrderedDict{String,Any}) catch _ OrderedDict{String,Any}() end
+        return OpenAIFunction(name, nothing, args_dict, args_str)
+    else
+        desc = get(x, "description", nothing)
+        params = get(x, "parameters", nothing)
+        return OpenAIFunction(name, desc, params, nothing)
+    end
+end
 
 struct OpenAITool <: AbstractTool
     type::String
@@ -65,8 +82,26 @@ StructTypes.StructType(::Type{OpenAIToolCall}) = StructTypes.Struct()
 StructTypes.names(::Type{OpenAIToolCall}) = ((:function_, :function),)
 
 FlootyAbstract.call_name(call::OpenAIToolCall) = call.function_.name
-FlootyAbstract.call_arguments(call::OpenAIToolCall) = call.function_.parameters
+FlootyAbstract.call_arguments(call::OpenAIToolCall) = begin
+    if call.function_.arguments !== nothing
+        try
+            JSON3.read(call.function_.arguments, Dict{String,Any})
+        catch
+            Dict{String,Any}()
+        end
+    else
+        Dict{String,Any}()
+    end
+end
 FlootyAbstract.call_id(call::OpenAIToolCall) = call.id
+
+function StructTypes.lower(call::OpenAIToolCall)
+    Dict{String,Any}(
+        "id" => call.id,
+        "type" => call.type,
+        "function" => StructTypes.lower(call.function_)
+    )
+end
 
 # Image content for vision models
 struct OpenAIImageUrl <: AbstractProviderObject
@@ -117,6 +152,7 @@ end
 
 StructTypes.StructType(::Type{OpenAIMessage}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{OpenAIMessage}) = (:content, :tool_calls, :tool_call_id, :name)
+StructTypes.defaults(::Type{OpenAIMessage}) = (role = "user", _type = "OpenAIMessage")
 
 # Custom serialization for OpenAI API format
 function StructTypes.lower(msg::OpenAIMessage)
@@ -222,6 +258,11 @@ end
 
 StructTypes.StructType(::Type{ChatCompletionResponse}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ChatCompletionResponse}) = (:usage, :service_tier, :system_fingerprint)
+
+function FlootyAbstract.response_message(response::ChatCompletionResponse)
+    isempty(response.choices) && error("ChatCompletionResponse has no choices")
+    response.choices[1].message
+end
 
 @kwdef struct ChatCompletionChunk <: OpenAIResponse
     id::String

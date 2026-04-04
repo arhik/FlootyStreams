@@ -3,7 +3,7 @@ using JSON3
 using OrderedCollections
 using Base64
 
-using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, model_name, model_provider
+using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, model_name, model_provider, AbstractChatResponse, response_message
 
 # absract/provider.jl - OllamaProvider implementation
 
@@ -23,7 +23,7 @@ StructTypes.StructType(::Type{OllamaProvider}) = StructTypes.Mutable()
 # Base types for the type system
 abstract type OllamaObject <: AbstractProviderObject end
 abstract type OllamaRequest <: OllamaObject end
-abstract type OllamaResponse <: OllamaObject end
+abstract type OllamaResponse <: AbstractChatResponse end
 
 struct OllamaError <: AbstractFlootyError
     message::String
@@ -218,6 +218,8 @@ end
 
 StructTypes.StructType(::Type{ChatResponse}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{ChatResponse}) = (:model, :created_at, :total_duration, :load_duration, :prompt_eval_count, :eval_count, :eval_duration)
+
+FlootyAbstract.response_message(response::ChatResponse) = response.message
 
 @kwdef struct EmbedRequest <: OllamaRequest
     model::String = ""
