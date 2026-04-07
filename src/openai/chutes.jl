@@ -189,8 +189,7 @@ end
 FlootyAbstract.create_message(provider::ChutesProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment}; kwargs...) =
     FlootyAbstract.create_message(OpenAIProvider(), role, content, attachments; kwargs...)
 
-FlootyAbstract.create_image_data(provider::ChutesProvider, data::Union{String, Vector{UInt8}}) =
-    OpenAIImageContent(data isa String ? data : Base64.base64encode(data))
+FlootyAbstract.create_image_data(provider::ChutesProvider, path::String) = OpenAIImageContent("data:image/png;base64,$(Base64.base64encode(read(path)))")
 
 FlootyAbstract.create_attachments(provider::ChutesProvider, paths::Vector{String}, mime_types::Vector{String}) =
     FlootyAbstract.create_attachments(OpenAIProvider(), paths, mime_types)

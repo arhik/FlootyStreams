@@ -74,38 +74,19 @@ FlootyAbstract.call_id(::OllamaToolCall) = nothing
 
 
 struct ImageData <: AbstractProviderObject
-    data::String
-    source_path::Union{String,Nothing}  # Original file path, if any
-
-    function ImageData(data::Union{String, Vector{UInt8}, AbstractString}; source_path::Union{String,Nothing}=nothing)
-        if data isa AbstractString
-            # Check if it looks like a file path (not too long, no newlines, contains valid path chars)
-            if length(data) < 4096 && !occursin('\n', data) && !startswith(data, "/9j/") && !startswith(data, "iVBORw0K")
-                try
-                    if isfile(data)
-                        return new(Base64.base64encode(read(data)), data)
-                    end
-                catch
-                    # isfile threw error, treat as not a file
-                end
-            end
-            # Treat as base64 string
-            try
-                Base64.base64decode(data)
-                return new(String(data), source_path)
-            catch
-                throw(ArgumentError("Invalid image data: must be a valid file path or base64 string"))
-            end
-        else
-            new(Base64.base64encode(data), source_path)
-        end
-    end
+    path::String        # Original file path (empty if deserialized from JSON)
+    data::String        # Base64 encoded image data
 end
 
-# Serialize as base64 string for API compatibility
+# Constructor from file path - reads and encodes to base64
+ImageData(path::String) = ImageData(path, Base64.base64encode(read(path)))
+
+# Serialization: ImageData serializes as base64 string (just the data)
 StructTypes.StructType(::Type{ImageData}) = StructTypes.StringType()
 StructTypes.lower(img::ImageData) = img.data
-StructTypes.construct(::Type{ImageData}, s::String) = ImageData(s; source_path=nothing)
+
+# Deserialization: JSON string -> ImageData (empty path, just base64 data)
+StructTypes.construct(::Type{ImageData}, s::String) = ImageData("", s)
 
 Base.string(img::ImageData) = img.data
 
@@ -129,7 +110,7 @@ FlootyAbstract.attachment_mime(att::ImageAttachment) = att.mime
 # Lazy load the ImageData
 function get_image_data(att::ImageAttachment)
     if att._data[] === nothing
-        att._data[] = ImageData(att.path; source_path=att.path)
+        att._data[] = ImageData(att.path)
     end
     att._data[]
 end

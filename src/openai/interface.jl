@@ -30,8 +30,7 @@ function FlootyAbstract.create_message(provider::OpenAIProvider, role::String, c
     OpenAIMessage(role=role, content=content_items)
 end
 
-FlootyAbstract.create_image_data(provider::OpenAIProvider, data::Union{String, Vector{UInt8}}) =
-    OpenAIImageContent(data isa String ? data : Base64.base64encode(data))
+FlootyAbstract.create_image_data(provider::OpenAIProvider, path::String) = OpenAIImageContent("data:image/png;base64,$(Base64.base64encode(read(path)))")
 
 FlootyAbstract.images(msg::OpenAIMessage) = nothing  # OpenAI uses content array, not separate images field
 FlootyAbstract.tool_calls(msg::OpenAIMessage) = msg.tool_calls

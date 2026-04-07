@@ -11,8 +11,7 @@ FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::S
 FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment}) =
     OllamaMessage(role=role, content=content, images=[get_image_data(att) for att in attachments])
 
-FlootyAbstract.create_image_data(provider::OllamaProvider, data::Union{String, Vector{UInt8}}) =
-    ImageData(data)
+FlootyAbstract.create_image_data(provider::OllamaProvider, path::String) = ImageData(path)
 
 FlootyAbstract.images(msg::OllamaMessage) = msg.images
 FlootyAbstract.tool_calls(msg::OllamaMessage) = msg.tool_calls
