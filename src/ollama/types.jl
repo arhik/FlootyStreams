@@ -79,15 +79,22 @@ struct ImageData <: AbstractProviderObject
 
     function ImageData(data::Union{String, Vector{UInt8}, AbstractString}; source_path::Union{String,Nothing}=nothing)
         if data isa AbstractString
-            if isfile(data)
-                return new(Base64.base64encode(read(data)), data)
-            else
+            # Check if it looks like a file path (not too long, no newlines, contains valid path chars)
+            if length(data) < 4096 && !occursin('\n', data) && !startswith(data, "/9j/") && !startswith(data, "iVBORw0K")
                 try
-                    Base64.base64decode(data)
-                    return new(String(data), source_path)
+                    if isfile(data)
+                        return new(Base64.base64encode(read(data)), data)
+                    end
                 catch
-                    throw(ArgumentError("Invalid image data: must be a valid file path or base64 string"))
+                    # isfile threw error, treat as not a file
                 end
+            end
+            # Treat as base64 string
+            try
+                Base64.base64decode(data)
+                return new(String(data), source_path)
+            catch
+                throw(ArgumentError("Invalid image data: must be a valid file path or base64 string"))
             end
         else
             new(Base64.base64encode(data), source_path)
@@ -95,9 +102,10 @@ struct ImageData <: AbstractProviderObject
     end
 end
 
-# Serialize as struct with both fields
-StructTypes.StructType(::Type{ImageData}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{ImageData}) = (:source_path,)
+# Serialize as base64 string for API compatibility
+StructTypes.StructType(::Type{ImageData}) = StructTypes.StringType()
+StructTypes.lower(img::ImageData) = img.data
+StructTypes.construct(::Type{ImageData}, s::String) = ImageData(s; source_path=nothing)
 
 Base.string(img::ImageData) = img.data
 
@@ -139,23 +147,6 @@ end
 StructTypes.StructType(::Type{OllamaMessage}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{OllamaMessage}) = (:content, :thinking, :images, :tool_calls, :tool_name)
 StructTypes.defaults(::Type{OllamaMessage}) = (role = "user", _type = "OllamaMessage")
-
-# Custom serialization: images as base64 strings for Ollama API compatibility
-function StructTypes.lower(msg::OllamaMessage)
-    d = Dict{String,Any}(
-        "role" => msg.role,
-        "_type" => "OllamaMessage"  # Include type discriminator
-    )
-    msg.content !== nothing && !isempty(msg.content) && (d["content"] = msg.content)
-    msg.thinking !== nothing && (d["thinking"] = msg.thinking)
-    if msg.images !== nothing && !isempty(msg.images)
-        # Serialize images as base64 strings (Ollama API format)
-        d["images"] = [img.data for img in msg.images]
-    end
-    msg.tool_calls !== nothing && !isempty(msg.tool_calls) && (d["tool_calls"] = msg.tool_calls)
-    msg.tool_name !== nothing && !isempty(msg.tool_name) && (d["tool_name"] = msg.tool_name)
-    return d
-end
 
 # Request Types
 @kwdef struct GenerateRequest <: OllamaRequest
