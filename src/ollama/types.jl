@@ -264,3 +264,29 @@ function FlootyAbstract.embed(embedder::OllamaEmbedder, texts::Vector{String})
     response = embed(embedder.provider, texts, embedder.model)
     return response.embeddings
 end
+
+# ═══════════════════════════════════════════════════════════════════════
+# Web Search Types
+# ═══════════════════════════════════════════════════════════════════════
+
+struct WebSearchResult <: AbstractProviderObject
+    title::String
+    url::String
+    content::String
+end
+
+StructTypes.StructType(::Type{WebSearchResult}) = StructTypes.Struct()
+
+struct WebSearchResponse <: OllamaResponse
+    results::Vector{WebSearchResult}
+end
+
+StructTypes.StructType(::Type{WebSearchResponse}) = StructTypes.Struct()
+
+struct WebFetchResponse <: OllamaResponse
+    title::String
+    content::String
+    links::Vector{String}
+end
+
+StructTypes.StructType(::Type{WebFetchResponse}) = StructTypes.Struct()

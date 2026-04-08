@@ -7,6 +7,7 @@ using StructTypes
 # Ollama
 include("ollama/types.jl")
 include("ollama/tools.jl")
+include("ollama/websearch.jl")
 include("ollama/chat.jl")
 include("ollama/utils.jl")
 include("ollama/interface.jl")
@@ -24,6 +25,7 @@ include("openai/chutes.jl")
 export create_stream
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment
 export OllamaModel
+export WebSearchResult, WebSearchResponse, WebFetchResponse, OllamaWebSearchProvider
 export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
 export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
