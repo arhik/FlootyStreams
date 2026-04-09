@@ -67,16 +67,16 @@ FlootyAbstract.provider_name(provider::PeerComputeProvider) = :peercompute
 # ═══════════════════════════════════════════════════════════════════════
 
 function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{Symbol,Any})
-    # Get verified peers
-    peers = PeerCompute.get_verified_peers_by_topic(get(config, :service_topic, "peercompute-nodes-v1"))
+    # Get discovered nodes with model information
+    nodes = PeerCompute.get_discovered_nodes()
     
     models = PeerComputeModel[]
-    for peer in peers
-        peer_models = PeerCompute.get_peer_models(peer)
-        for model_name in peer_models
+    for (peer_id, node_info) in nodes
+        model_names = get(node_info, "model_names", String[])
+        for model_name in model_names
             push!(models, PeerComputeModel(
                 name=model_name,
-                peer_id=peer
+                peer_id=peer_id
             ))
         end
     end
