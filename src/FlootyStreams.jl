@@ -3,6 +3,7 @@ module FlootyStreams
 using FlootyAbstract
 using FlootyBase
 using StructTypes
+using PeerCompute
 
 # Ollama
 include("ollama/types.jl")
@@ -22,6 +23,10 @@ include("openai/interface.jl")
 # Chutes (OpenAI-compatible)
 include("openai/chutes.jl")
 
+# PeerCompute P2P
+include("peercompute/types.jl")
+include("peercompute/interface.jl")
+
 export create_stream
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment
 export OllamaModel
@@ -30,6 +35,7 @@ export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
 export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
+export PeerComputeProvider, PeerComputeMessage, PeerComputeModel, PeerComputeResponse
 export AbstractFlootyError, ToolError
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -38,8 +44,10 @@ export AbstractFlootyError, ToolError
 function __init__()
     FlootyBase.register_message_subtype!(:OllamaMessage, OllamaMessage)
     FlootyBase.register_message_subtype!(:OpenAIMessage, OpenAIMessage)
+    FlootyBase.register_message_subtype!(:PeerComputeMessage, PeerComputeMessage)
     FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
     FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)
+    FlootyBase.register_model_subtype!(:PeerComputeModel, PeerComputeModel)
 end
 
 end # module FlootyStreams
