@@ -36,6 +36,8 @@ export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
 export PeerComputeProvider, PeerComputeMessage, PeerComputeModel, PeerComputeResponse
+export start_provider, stop_provider
+export GLOBAL_PROVIDER
 export AbstractFlootyError, ToolError
 
 # ═══════════════════════════════════════════════════════════════════════

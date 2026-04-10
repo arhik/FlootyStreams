@@ -36,6 +36,11 @@ end
 StructTypes.StructType(::Type{PeerComputeProvider}) = StructTypes.Mutable()
 
 # ═══════════════════════════════════════════════════════════════════════
+# Process-level singleton: only one P2P node per process (Go limitation)
+# ═══════════════════════════════════════════════════════════════════════
+const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
+
+# ═══════════════════════════════════════════════════════════════════════
 # Messages
 # ═══════════════════════════════════════════════════════════════════════
 
