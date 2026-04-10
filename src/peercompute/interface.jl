@@ -3,45 +3,149 @@
 
 Interface implementations for FlootyAbstract.
 
-Architecture:
-──────────────────────────────────────────────────────────────
-  FlootyCore (Provider)                FlootyApp (Consumer)
-  ┌──────────────────────┐            ┌──────────────────────┐
-  │ Bootstrap + Peer      │◄─── P2P ──►│ Peer (no Ollama)     │
-  │ Has Ollama locally    │            │ Discovers models     │
-  │ Announces models      │            │ Forwards requests    │
-  │ Serves inference      │            │ via P2P              │
-  └──────────────────────┘            └──────────────────────┘
+Local Peer Discovery (Layer 1):
+    Same machine:  ~/.flooty/bootstrap_info.json (written by bootstrap, read by peers)
+    Default port:  4002 (bootstrap), 4012 (peer)
+    Static key:    ~/.flooty/bootstrap.key → deterministic peer ID
+    → Zero config on same machine. Just works.
 
-  FlootyApp NEVER calls Ollama directly.
-  It discovers peers via P2P and forwards inference requests.
-
-  FlootyCore serves inference when peers request it (handled in Go).
-  FlootyCore can also consume — but only via P2P (never self).
-
-Usage:
-  # In FlootyCore (bootstrap node with Ollama):
-  provider = create_provider_instance(:peercompute; config=Dict(
-    :bootstrap_node => true,
-    :p2p_port => 4002,
-    :api_port => 5002,
-  ))
-  start_provider(provider)
-
-  # In FlootyApp (consumer, no Ollama needed):
-  provider = create_provider_instance(:peercompute; config=Dict(
-    :bootstrap_peers => ["/ip4/127.0.0.1/tcp/4002/p2p/<id>"],
-    :p2p_port => 4001,
-    :api_port => 5001,
-  ))
-  start_provider(provider)
-
-  # Use inference (routes through P2P to the peer that has the model):
-  messages = [create_message(provider, "user", "Hello!")]
-  response = create_stream(provider, "qwen3.5:cloud", messages)
+Future layers:
+    LAN:      mDNS auto-discovery
+    Internet: Public bootstrap nodes, DNS, relay
 """
 
 using PeerCompute
+# ════════════════════════════════════════════════════════════════════
+# Local Discovery Constants
+# ════════════════════════════════════════════════════════════════════
+
+"""Default directory for PeerCompute state (keys, bootstrap info, etc.)"""
+const FLOOTY_DIR = joinpath(homedir(), ".flooty")
+
+"""Default bootstrap P2P port"""
+const DEFAULT_BOOTSTRAP_P2P_PORT = 9002
+const DEFAULT_BOOTSTRAP_API_PORT = 9003
+
+"""Default peer P2P port (offset from bootstrap)"""
+const DEFAULT_PEER_P2P_PORT = 9012
+const DEFAULT_PEER_API_PORT = 9013
+
+"""Path to bootstrap info file (written by bootstrap node, read by peers)"""
+const BOOTSTRAP_INFO_FILE = joinpath(FLOOTY_DIR, "bootstrap_info.json")
+
+"""Path to the default bootstrap key"""
+const DEFAULT_BOOTSTRAP_KEY = joinpath(FLOOTY_DIR, "bootstrap.key")
+
+"""Path to the default peer key"""
+const DEFAULT_PEER_KEY = joinpath(FLOOTY_DIR, "peer.key")
+
+# ═══════════════════════════════════════════════════════════════════════
+# Local Discovery Helpers
+# ═══════════════════════════════════════════════════════════════════════
+
+"""
+    write_bootstrap_info(node_id, p2p_port, api_port, multiaddresses)
+
+Write bootstrap info to `~/.flooty/bootstrap_info.json` so local peers
+can find this bootstrap node without being told the address.
+"""
+function write_bootstrap_info(node_id::String, p2p_port::Int, api_port::Int, multiaddresses)
+    mkpath(FLOOTY_DIR)
+    # Ensure multiaddresses is Vector{String}
+    addr_strings = [String(a) for a in multiaddresses]
+    info = Dict{String, Any}(
+        "node_id" => node_id,
+        "p2p_port" => p2p_port,
+        "api_port" => api_port,
+        "multiaddresses" => multiaddresses,
+        "updated_at" => string(Dates.now()),
+    )
+    # Build full peer addresses
+    peer_addrs = String[]
+    for addr in multiaddresses
+        if contains(addr, "/p2p/")
+            push!(peer_addrs, addr)
+        else
+            push!(peer_addrs, "$addr/p2p/$node_id")
+        end
+    end
+    info["peer_addresses"] = peer_addrs
+    
+    open(BOOTSTRAP_INFO_FILE, "w") do f
+        JSON.print(f, info, 2)
+    end
+    @info "Wrote bootstrap info to $BOOTSTRAP_INFO_FILE"
+    return info
+end
+
+"""
+    read_bootstrap_info() -> Union{Dict, Nothing}
+
+Read bootstrap info from `~/.flooty/bootstrap_info.json`.
+Returns nothing if file doesn't exist or is invalid.
+"""
+function read_bootstrap_info()
+    if !isfile(BOOTSTRAP_INFO_FILE)
+        return nothing
+    end
+    try
+        info = JSON.parsefile(BOOTSTRAP_INFO_FILE)
+        # Validate it has what we need
+        if haskey(info, "peer_addresses") && !isempty(info["peer_addresses"])
+            return info
+        end
+        # Fallback: reconstruct from node_id + multiaddresses
+        if haskey(info, "node_id") && haskey(info, "multiaddresses")
+            addrs = String[]
+            for addr in info["multiaddresses"]
+                if contains(addr, "/p2p/")
+                    push!(addrs, addr)
+                else
+                    push!(addrs, "$addr/p2p/$(info["node_id"])")
+                end
+            end
+            info["peer_addresses"] = addrs
+            return info
+        end
+        return nothing
+    catch e
+        @debug "Could not read bootstrap info" error=e
+        return nothing
+    end
+end
+
+"""
+    discover_local_bootstrap() -> Vector{String}
+
+Find bootstrap peer addresses through local discovery:
+1. Check ENV (PEERCOMPUTE_BOOTSTRAP_ADDR) — explicit override
+2. Check ~/.flooty/bootstrap_info.json — written by local bootstrap
+Returns a list of full multiaddresses (e.g. ["/ip4/127.0.0.1/tcp/4002/p2p/12D3KooW..."])
+"""
+function discover_local_bootstrap()
+    # Layer 0: ENV override (highest priority)
+    env_addr = get(ENV, "PEERCOMPUTE_BOOTSTRAP_ADDR", "")
+    if !isempty(env_addr)
+        addrs = [String(strip(a)) for a in split(env_addr, ",") if !isempty(strip(a))]
+        if !isempty(addrs)
+            @info "Found bootstrap from ENV" addrs=addrs
+            return addrs
+        end
+    end
+    
+    # Layer 1: Local bootstrap info file
+    info = read_bootstrap_info()
+    if info !== nothing
+        raw_addrs = get(info, "peer_addresses", [])
+        addrs = [String(a) for a in raw_addrs]
+        if !isempty(addrs)
+            @info "Found bootstrap from local info file" addrs=addrs
+            return addrs
+        end
+    end
+    
+    return String[]
+end
 
 # ═══════════════════════════════════════════════════════════════════════
 # Message Interface
@@ -85,26 +189,28 @@ function FlootyAbstract.create_provider_instance(::Val{:peercompute}; config::Di
         return existing
     end
     
-    # Build config from ENV + explicit config (ENV provides defaults, config overrides)
+    # ── Resolve config: explicit config > ENV > defaults ──
+    bootstrap_node = get(config, :bootstrap_node, get(ENV, "PEERCOMPUTE_BOOTSTRAP", "") == "true")
+    
+    # Bootstrap peers: explicit config > ENV > local discovery
     bootstrap_peers = get(config, :bootstrap_peers, String[])
-    env_bootstrap = get(ENV, "PEERCOMPUTE_BOOTSTRAP_ADDR", "")
-    if !isempty(env_bootstrap)
-        # ENV can contain comma-separated addresses
-        for addr in split(env_bootstrap, ",")
-            addr = strip(addr)
-            !isempty(addr) && push!(bootstrap_peers, addr)
-        end
+    if isempty(bootstrap_peers)
+        bootstrap_peers = discover_local_bootstrap()
     end
     
-    service_topic = get(config, :service_topic, "peercompute-node-v1")
-    p2p_port = get(config, :p2p_port, parse(Int, get(ENV, "PEERCOMPUTE_P2P_PORT", "4001")))
-    api_port = get(config, :api_port, parse(Int, get(ENV, "PEERCOMPUTE_API_PORT", "5001")))
-    bootstrap_node = get(config, :bootstrap_node, get(ENV, "PEERCOMPUTE_BOOTSTRAP", "") == "true")
+    # Ports: explicit config > ENV > defaults (offset from bootstrap if bootstrap_node)
+    if bootstrap_node
+        p2p_port = get(config, :p2p_port, parse(Int, get(ENV, "PEERCOMPUTE_P2P_PORT", string(DEFAULT_BOOTSTRAP_P2P_PORT))))
+        api_port = get(config, :api_port, parse(Int, get(ENV, "PEERCOMPUTE_API_PORT", string(DEFAULT_BOOTSTRAP_API_PORT))))
+    else
+        p2p_port = get(config, :p2p_port, parse(Int, get(ENV, "PEERCOMPUTE_P2P_PORT", string(DEFAULT_PEER_P2P_PORT))))
+        api_port = get(config, :api_port, parse(Int, get(ENV, "PEERCOMPUTE_API_PORT", string(DEFAULT_PEER_API_PORT))))
+    end
     
     # If a provider exists but isn't running, update its config
     if existing !== nothing
         existing.bootstrap_peers = bootstrap_peers
-        existing.service_topic = service_topic
+        existing.service_topic = get(config, :service_topic, "peercompute-nodes-v1")
         existing.p2p_port = p2p_port
         existing.api_port = api_port
         existing.bootstrap_node = bootstrap_node
@@ -113,7 +219,7 @@ function FlootyAbstract.create_provider_instance(::Val{:peercompute}; config::Di
     
     provider = PeerComputeProvider(
         bootstrap_peers=bootstrap_peers,
-        service_topic=service_topic,
+        service_topic=get(config, :service_topic, "peercompute-nodes-v1"),
         p2p_port=p2p_port,
         api_port=api_port,
         bootstrap_node=bootstrap_node,
@@ -128,8 +234,10 @@ end
 Start the PeerCompute P2P node.
 
 - If `bootstrap_node=true`, starts a bootstrap node first, then a peer node.
-- If `bootstrap_peers` is set, starts a peer node that connects to them.
-- If neither, starts a standalone peer node (for local testing).
+  Writes bootstrap info to `~/.flooty/bootstrap_info.json` for local discovery.
+- If `bootstrap_peers` is already set (from config or local discovery),
+  starts a peer node that connects to them.
+- If neither, tries local discovery first, then starts standalone.
 """
 function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=Dict{Symbol,Any}())
     if provider.node_running
@@ -144,7 +252,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
     try
         # ── Bootstrap node (if configured) ──
         if provider.bootstrap_node
-            bootstrap_key = get(config, :bootstrap_key, "keys/bootstrap.key")
+            bootstrap_key = get(config, :bootstrap_key, DEFAULT_BOOTSTRAP_KEY)
             mkpath(dirname(bootstrap_key))
             
             if !isfile(bootstrap_key)
@@ -159,7 +267,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             
             bootstrap_id = PeerCompute.get_bootstrap_node_id()
             bootstrap_addrs = PeerCompute.get_bootstrap_multiaddresses()
-            @info "Bootstrap node started" bootstrap_id = bootstrap_id
+            @info "Bootstrap node started" bootstrap_id=bootstrap_id
             
             # Peer runs on different ports than bootstrap
             peer_p2p_port = provider.p2p_port + 10
@@ -175,16 +283,28 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                 end
             end
             
-            # Set ENV so any future provider instances can find the bootstrap
-            ENV["PEERCOMPUTE_BOOTSTRAP_ADDR"] = join(full_bootstrap_addrs, ",")
-            
             provider.bootstrap_peers = full_bootstrap_addrs
             provider.p2p_port = peer_p2p_port
             provider.api_port = peer_api_port
+            
+            # Write bootstrap info for local discovery
+            write_bootstrap_info(bootstrap_id, provider.p2p_port - 10, provider.api_port - 10, full_bootstrap_addrs)
+            
+            # Also set ENV so in-process providers can find it
+            ENV["PEERCOMPUTE_BOOTSTRAP_ADDR"] = join(full_bootstrap_addrs, ",")
+        else
+            # Not a bootstrap node — make sure we have bootstrap peers
+            if isempty(provider.bootstrap_peers)
+                @info "No bootstrap peers configured, attempting local discovery..."
+                provider.bootstrap_peers = discover_local_bootstrap()
+                if isempty(provider.bootstrap_peers)
+                    @warn "No bootstrap peers found. Running in standalone mode (no P2P network)."
+                end
+            end
         end
         
         # ── Peer node ──
-        peer_key = get(config, :peer_key, "keys/peer.key")
+        peer_key = get(config, :peer_key, DEFAULT_PEER_KEY)
         mkpath(dirname(peer_key))
         
         if !isfile(peer_key)
@@ -194,6 +314,15 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
         end
         
         models = get(config, :models, String[])
+        # Auto-detect local Ollama models for bootstrap nodes (providers)
+        if isempty(models) && provider.bootstrap_node
+            try
+                models = PeerCompute.get_ollama_models()
+                @info "Auto-detected $(length(models)) local Ollama models"
+            catch
+                @warn "Could not detect Ollama models"
+            end
+        end
         enable_mdns = get(config, :enable_mdns, true)
         
         settings = PeerCompute.PeerComputeSettings(
@@ -247,7 +376,7 @@ end
 """
     stop_provider(provider::PeerComputeProvider)
 
-Stop the PeerCompute P2P node.
+Stop the PeerCompute P2P node. Cleans up the bootstrap info file.
 """
 function stop_provider(provider::PeerComputeProvider)
     if !provider.node_running
@@ -255,9 +384,11 @@ function stop_provider(provider::PeerComputeProvider)
         return
     end
     
-    try; PeerCompute.stop_daemon(); catch e; @warn "Error stopping peer node" exception = e; end
+    try; PeerCompute.stop_daemon(); catch e; @warn "Error stopping peer node" exception=e; end
     if provider.bootstrap_node
-        try; PeerCompute.stop_bootstrap_node(); catch e; @warn "Error stopping bootstrap" exception = e; end
+        try; PeerCompute.stop_bootstrap_node(); catch e; @warn "Error stopping bootstrap" exception=e; end
+        # Clean up local bootstrap info
+        try; isfile(BOOTSTRAP_INFO_FILE) && rm(BOOTSTRAP_INFO_FILE); catch; end
     end
     
     provider.node_running = false
@@ -274,11 +405,22 @@ FlootyAbstract.provider_name(provider::PeerComputeProvider) = :peercompute
 function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{Symbol,Any})
     models = PeerComputeModel[]
     
-    # Only models discovered via P2P from remote peers
-    # Local Ollama models are listed by the :ollama provider, not here
-    discovered = PeerCompute.get_discovered_nodes()
-    for (peer_id, node_info) in discovered
-        for model_name in get(node_info, "model_names", String[])
+    # Get verified peers (the reliable discovery mechanism)
+    verified = try PeerCompute.get_verified_peers_by_topic("peercompute-nodes-v1"); catch; String[]; end
+    our_id = try PeerCompute.get_node_id(); catch; ""; end
+    
+    for peer_id in verified
+        peer_id == our_id && continue  # skip ourselves
+        
+        # Query each verified peer for its model list
+        peer_models = try
+            result = PeerCompute.get_peer_models(peer_id)
+            get(result, "model_names", String[])
+        catch
+            String[]
+        end
+        
+        for model_name in peer_models
             push!(models, PeerComputeModel(name=model_name, peer_id=peer_id))
         end
     end
@@ -288,10 +430,6 @@ end
 
 # ═══════════════════════════════════════════════════════════════════════
 # Chat / Stream — Pure P2P forwarding
-#
-# FlootyApp NEVER calls Ollama directly.
-# It discovers which peer has the model and sends the request
-# through P2P. The peer (FlootyCore) handles it locally.
 # ═══════════════════════════════════════════════════════════════════════
 
 function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::String, messages::Vector{<:AbstractMessage};
@@ -309,30 +447,31 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         end
     end
     
-    prompt = build_prompt_from_messages(messages)
     our_id = try; PeerCompute.get_node_id(); catch; ""; end
     
     # ── Step 1: Find a remote peer that has the requested model ──
-    discovered = PeerCompute.get_discovered_nodes()
-    verified_peers = PeerCompute.get_verified_peers_by_topic(provider.service_topic)
+    verified_peers = try; PeerCompute.get_verified_peers_by_topic(provider.service_topic); catch; String[]; end
     
     # Also try connected peers if no verified ones yet
     if isempty(verified_peers)
-        verified_peers = PeerCompute.get_connected_peers()
+        verified_peers = try; PeerCompute.get_connected_peers(); catch; String[]; end
     end
     
-    # Select peer: prefer one that advertises the model, skip ourselves
+    # Select peer: prefer one that has the model, skip ourselves
     target_peer = nothing
     
     # First pass: find a verified remote peer that has the model
     for peer_id in verified_peers
         peer_id == our_id && continue  # never connect to ourselves
-        if haskey(discovered, peer_id)
-            peer_models = get(discovered[peer_id], "model_names", String[])
-            if model in peer_models
-                target_peer = peer_id
-                break
-            end
+        peer_models = try
+            result = PeerCompute.get_peer_models(peer_id)
+            get(result, "model_names", String[])
+        catch
+            String[]
+        end
+        if !isempty(peer_models) && model in peer_models
+            target_peer = peer_id
+            break
         end
     end
     
@@ -350,41 +489,66 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
               "Ensure a FlootyCore node with Ollama is running and connected to the network.")
     end
     
-    # ── Step 2: Forward inference request to the remote peer via P2P ──
-    @info "Forwarding inference to peer" peer = target_peer[1:min(20, length(target_peer))] * "..." model = model
+    @info "Forwarding inference to peer" peer=target_peer[1:min(20, length(target_peer))] * "..." model=model has_tools=(tools !== nothing && !isempty(tools))
     
-    result = PeerCompute.send_inference_request(target_peer, model, prompt)
+    # ── Step 2: Build Ollama-compatible request ──
+    # Convert messages to Ollama format
+    ollama_messages = [
+        Dict("role" => FlootyAbstract.role(m), "content" => something(FlootyAbstract.content(m), ""))
+        for m in messages if FlootyAbstract.content(m) !== nothing
+    ]
     
-    # Parse the P2P response
-    # result can be: Dict("status"=>"success", "response"=>"text", ...)
-    # or nested: Dict("status"=>"success", "response"=>Dict(...))
+    # Build request
+    request = Dict{String,Any}(
+        "model" => model,
+        "messages" => ollama_messages,
+        "stream" => stream
+    )
     
-    if result isa Dict
-        status_val = get(result, "status", "unknown")
-        
-        # Extract response text - handle flat or nested JSON
-        raw_response = get(result, "response", result)
-        if raw_response isa Dict
-            response_text = string(get(raw_response, "response", raw_response))
-        else
-            response_text = string(raw_response)
-        end
-        
-        if status_val == "error"
-            error_msg = string(get(result, "message", result))
-            error("P2P inference failed: $error_msg")
-        end
-        
-        msg = PeerComputeMessage(role="assistant", content=response_text)
-        return PeerComputeResponse(msg, model, target_peer, 0, status_val == "success")
-    else
-        msg = PeerComputeMessage(role="assistant", content=string(result))
-        return PeerComputeResponse(msg, model, target_peer, 0, true)
+    # Add tools if provided
+    if tools !== nothing && !isempty(tools)
+        ollama_tools = [FlootyAbstract.build_tool(t, provider).function_ for t in tools]
+        request["tools"] = ollama_tools
     end
+    
+    # Add options if provided
+    if options !== nothing
+        request["options"] = options
+    end
+    
+    # Add format if provided
+    if format !== nothing
+        request["format"] = format
+    end
+    
+    # ── Step 3: Send via P2P ──
+    # Serialize to JSON
+    request_json = JSON.json(request)
+    
+    # Send via P2P remote peer's Ollama API
+    # Pass the actual model name, not "ollama"
+    result = PeerCompute.send_inference_request(target_peer, model, request_json)
+    
+    if result.status == "error"
+        error("P2P inference failed: $(result.response)")
+    end
+    
+    # Parse Ollama response
+    response = try
+        JSON.parse(result.response)
+    catch
+        Dict("message" => Dict("content" => result.response))
+    end
+    
+    message = get(response, "message", Dict())
+    content = get(message, "content", "")
+    
+    msg = PeerComputeMessage(role="assistant", content=content)
+    return PeerComputeResponse(msg, model, target_peer, 0, result.status == "success")
 end
 
-function FlootyAbstract.chat_stream(provider::PeerComputeProvider, model::String, messages::Vector{<:AbstractMessage};
-    stream::Bool=false, format=nothing, options=nothing, tools=nothing)
+function FlootyAbstract.chat_stream(provider::PeerComputeProvider, model::String, messages::Vector{<:AbstractMessage},
+    stream::Bool, format, options, tools)
     FlootyAbstract.create_stream(provider, model, messages; stream, format, options, tools)
 end
 
@@ -413,11 +577,64 @@ function build_prompt_from_messages(messages::Vector{<:AbstractMessage})::String
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# Tool Building / Embedder (not supported)
+# Tool Support
 # ═══════════════════════════════════════════════════════════════════════
 
-FlootyAbstract.build_tool(tool::FlootyAbstract.AbstractTool, provider::PeerComputeProvider) =
-    error("PeerCompute does not support tool calling")
+"""
+    FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider) -> PeerComputeTool
+
+Convert an AbstractTool to Ollama-compatible PeerComputeTool format.
+"""
+function FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider)
+    # Convert parameters to Ollama format
+    params = FlootyAbstract.tool_parameters(tool)
+    
+    # Build parameters schema
+    properties = Dict{String,Any}()
+    required = String[]
+    
+    if params isa Dict && haskey(params, "properties")
+        # Already in schema format
+        for (k, v) in params["properties"]
+            properties[k] = v
+        end
+        if haskey(params, "required")
+            required = params["required"]
+        end
+    elseif params isa Vector
+        # Convert from simple vector
+        for p in params
+            if p isa String
+                properties[p] = Dict("type" => "string", "description" => "")
+            elseif p isa Dict
+                name = get(p, "name", "param")
+                properties[name] = Dict(
+                    "type" => get(p, "type", "string"),
+                    "description" => get(p, "description", "")
+                )
+                if get(p, "required", false)
+                    push!(required, name)
+                end
+            end
+        end
+    end
+    
+    function_def = Dict(
+        "name" => FlootyAbstract.tool_name(tool),
+        "description" => FlootyAbstract.tool_description(tool),
+        "parameters" => Dict(
+            "type" => "object",
+            "properties" => properties,
+            "required" => required
+        )
+    )
+    
+    return PeerComputeTool("function", function_def)
+end
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tool Building / Embedder
+# ═══════════════════════════════════════════════════════════════════════
 
 FlootyAbstract.create_embedder(provider::PeerComputeProvider, model::String; kwargs...) =
     error("PeerCompute does not support embeddings")

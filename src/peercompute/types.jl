@@ -73,6 +73,11 @@ StructTypes.omitempties(::Type{PeerComputeResponse}) = (:model, :peer_id)
 FlootyAbstract.response_message(response::PeerComputeResponse) = response.message
 
 # ═══════════════════════════════════════════════════════════════════════
+# P2P Inference Response (from Go layer) — imported from PeerCompute
+# PeerCompute.P2PInferenceResponse is used for parsing Go responses
+# ═══════════════════════════════════════════════════════════════════════
+
+# ═══════════════════════════════════════════════════════════════════════
 # Model Information
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -93,3 +98,26 @@ function Base.show(io::IO, model::PeerComputeModel)
     print(io, "PeerComputeModel(", model.name, ")")
     !isnothing(model.peer_id) && print(io, " peer=", model.peer_id[1:min(12, length(model.peer_id))], "...")
 end
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tool Support
+# ═══════════════════════════════════════════════════════════════════════
+
+"""Tool definition for PeerCompute (Ollama-compatible format)"""
+struct PeerComputeTool <: AbstractTool
+    type::String
+    function_::Dict{String,Any}  # Ollama uses nested function structure
+end
+
+FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
+FlootyAbstract.tool_description(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "description", "")
+FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "properties", Dict())
+
+"""Tool call from model response"""
+struct PeerComputeToolCall <: AbstractToolCall
+    function_::Dict{String,Any}
+end
+
+FlootyAbstract.call_name(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "name", "unknown")
+FlootyAbstract.call_arguments(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "arguments", Dict())
+FlootyAbstract.call_id(::PeerComputeToolCall) = nothing
