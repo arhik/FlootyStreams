@@ -373,6 +373,7 @@ end
 function FlootyAbstract.list_provider_models(p::BareLibP2PProvider)
     # Query local provider if available (server/bootstrap mode)
     models = BareLibP2PModel[]
+    seen = Set{String}()
     
     if p.local_provider !== nothing
         try
@@ -390,11 +391,15 @@ function FlootyAbstract.list_provider_models(p::BareLibP2PProvider)
             
             # Wrap as barelibp2p models (clients connect via P2P)
             for m in local_models
-                push!(models, BareLibP2PModel(
-                    name = FlootyAbstract.model_name(m),
-                    original_provider = string(prov_name),  # "ollama" for routing
-                    peer_id = p.peer_id
-                ))
+                name = FlootyAbstract.model_name(m)
+                if !(name in seen)
+                    push!(seen, name)
+                    push!(models, BareLibP2PModel(
+                        name = name,
+                        original_provider = string(prov_name),
+                        peer_id = p.peer_id
+                    ))
+                end
             end
         catch e
             @warn "[BareLibP2P] Could not list local models" error=e
@@ -405,11 +410,14 @@ function FlootyAbstract.list_provider_models(p::BareLibP2PProvider)
     if p.node_running
         for peer in discover_peers(p)
             for (model_name, orig_provider) in peer.models
-                push!(models, BareLibP2PModel(
-                    name = model_name,
-                    original_provider = orig_provider,
-                    peer_id = peer.peer_id
-                ))
+                if !(model_name in seen)
+                    push!(seen, model_name)
+                    push!(models, BareLibP2PModel(
+                        name = model_name,
+                        original_provider = orig_provider,
+                        peer_id = peer.peer_id
+                    ))
+                end
             end
         end
     end
