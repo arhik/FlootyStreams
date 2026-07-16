@@ -10,9 +10,59 @@ using Dates
 
 using FlootyAbstract: AbstractLLMProvider, AbstractModel, AbstractProviderObject, AbstractTool
 
+
 # ═══════════════════════════════════════════════════════════════════════
-# BareLibP2P Provider - carries actual provider for local execution
+# Peer Selection Strategy — abstraction for choosing which peer to route to
 # ═══════════════════════════════════════════════════════════════════════
+
+"""
+    PeerSelectionStrategy
+
+Abstract type for peer selection strategies.
+Implementations decide which peer to route a model request to.
+"""
+abstract type PeerSelectionStrategy end
+
+"""
+    FirstMatchStrategy
+
+Returns the first peer in the list that has the requested model.
+Simple, predictable, no overhead.
+"""
+struct FirstMatchStrategy <: PeerSelectionStrategy end
+
+"""
+    RandomPeerStrategy
+
+Picks a random peer from those that have the requested model.
+Provides basic load distribution across peers.
+
+TODO: implement random selection
+"""
+struct RandomPeerStrategy <: PeerSelectionStrategy end
+
+"""
+    LatencyAwareStrategy
+
+Prefers peers with lowest measured round-trip time.
+Requires periodic latency probes to each peer.
+
+TODO: implement latency tracking and probing
+"""
+struct LatencyAwareStrategy <: PeerSelectionStrategy end
+
+"""
+    RoundRobinStrategy
+
+Distributes requests evenly across all peers that have the model.
+Uses a per-model round-robin counter.
+
+TODO: implement round-robin counter
+"""
+struct RoundRobinStrategy <: PeerSelectionStrategy end
+
+# Default strategy — first match keeps current behavior
+const DEFAULT_PEER_SELECTOR = FirstMatchStrategy()
 
 mutable struct BareLibP2PProvider <: AbstractLLMProvider
     node_running::Bool
@@ -38,19 +88,23 @@ mutable struct BareLibP2PProvider <: AbstractLLMProvider
     # LOCAL actual provider instance!
     # When set, chat() delegates to this provider
     local_provider::Union{AbstractLLMProvider,Nothing}
-
+    
+    # Peer selection strategy for routing requests
+    peer_selector::PeerSelectionStrategy
+    
     function BareLibP2PProvider(;
         bootstrap_peers::Vector{String}=String[],
         service_topic::String="barelibp2p-nodes-v1",
         p2p_port::Int=4001,
         api_port::Int=5001,
         bootstrap_node::Bool=false,
-        local_provider::Union{AbstractLLMProvider,Nothing}=nothing
+        local_provider::Union{AbstractLLMProvider,Nothing}=nothing,
+        peer_selector::PeerSelectionStrategy=DEFAULT_PEER_SELECTOR
     )
         new(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node,
             nothing, "", nothing, nothing, BareLibP2P.Multiaddr.MultiaddrStruct[],
             Dict{String,String}(), Dict{String,Tuple{String,String}}(),
-            local_provider)
+            local_provider, peer_selector)
     end
 end
 

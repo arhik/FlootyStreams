@@ -86,7 +86,7 @@ function FlootyAbstract.chat(
     peers = discover_peers(p)
     isempty(peers) && return _error("No P2P peers available")
     
-    peer = find_peer_with_model(peers, model)
+    peer = find_peer_with_model(peers, model, p.peer_selector)
     peer === nothing && return _error("No peer found for model: $model")
     
     # Get original provider type from peer's announcement
@@ -127,7 +127,7 @@ function FlootyAbstract.chat_stream(
     peers = discover_peers(p)
     isempty(peers) && return _error("No P2P peers available")
     
-    peer = find_peer_with_model(peers, model)
+    peer = find_peer_with_model(peers, model, p.peer_selector)
     peer === nothing && return _error("No peer for model: $model")
     
     orig_provider = get(peer.models, model, "ollama")
@@ -270,13 +270,62 @@ function discover_peers(p::BareLibP2PProvider)
     peers
 end
 
-function find_peer_with_model(peers::Vector{BareLibP2PPeerInfo}, model::String)
+"""
+    find_peer_with_model(peers, model, strategy)
+
+Select a peer that has the requested model using the given strategy.
+"""
+function find_peer_with_model(peers::Vector{BareLibP2PPeerInfo}, model::String, strategy::PeerSelectionStrategy)
+    select_peer(peers, model, strategy)
+end
+
+# ── Strategy implementations ──
+
+"""
+    select_peer(peers, model, ::FirstMatchStrategy)
+
+Return the first peer in the list that has the model.
+"""
+function select_peer(peers::Vector{BareLibP2PPeerInfo}, model::String, ::FirstMatchStrategy)
     for peer in peers
         if haskey(peer.models, model)
             return peer
         end
     end
     nothing
+end
+
+"""
+    select_peer(peers, model, ::RandomPeerStrategy)
+
+TODO: pick a random peer from those that have the model.
+For now falls back to first match.
+"""
+function select_peer(peers::Vector{BareLibP2PPeerInfo}, model::String, ::RandomPeerStrategy)
+    # Placeholder — falls back to first match
+    select_peer(peers, model, FirstMatchStrategy())
+end
+
+"""
+    select_peer(peers, model, ::LatencyAwareStrategy)
+
+TODO: pick the peer with lowest measured RTT.
+For now falls back to first match.
+"""
+function select_peer(peers::Vector{BareLibP2PPeerInfo}, model::String, ::LatencyAwareStrategy)
+    # Placeholder — falls back to first match
+    select_peer(peers, model, FirstMatchStrategy())
+end
+
+"""
+    select_peer(peers, model, ::RoundRobinStrategy)
+
+TODO: cycle through peers evenly using a per-model counter.
+For now falls back to first match.
+"""
+function select_peer(peers::Vector{BareLibP2PPeerInfo}, model::String, ::RoundRobinStrategy)
+    # Placeholder — falls back to first match
+    select_peer(peers, model, FirstMatchStrategy())
 end
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -366,7 +415,8 @@ function FlootyAbstract.create_provider_instance(::Val{:barelibp2p}; config::Dic
         p2p_port = get(config, :p2p_port, 4001),
         api_port = get(config, :api_port, 5001),
         bootstrap_node = get(config, :bootstrap_node, false),
-        local_provider = get(config, :local_provider, nothing)
+        local_provider = get(config, :local_provider, nothing),
+        peer_selector = get(config, :peer_selector, DEFAULT_PEER_SELECTOR)
     )
 end
 
