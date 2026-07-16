@@ -33,7 +33,7 @@ include("barelibp2p/types.jl")
 include("barelibp2p/interface.jl")
 
 export create_stream
-export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment
+export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, OllamaProvider
 export OllamaModel
 export WebSearchResult, WebSearchResponse, WebFetchResponse, OllamaWebSearchProvider
 export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
