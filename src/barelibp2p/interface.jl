@@ -9,6 +9,8 @@ Client discovers models via gossip and routes to peers.
 using JSON3
 using Sockets
 using BareLibP2P
+FlootyAbstract.provider_name(::BareLibP2PProvider) = :barelibp2p
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # Provider Lifecycle
@@ -72,6 +74,14 @@ function FlootyAbstract.chat(
     model = agent.model
     @info "[BareLibP2P] chat" model=model
     
+    # Local fallback: if we have a local provider, delegate directly
+    if p.local_provider !== nothing
+        return FlootyAbstract.chat(
+            p.local_provider, agent, messages;
+            tools=tools, stream=stream
+        )
+    end
+    
     # Discover peers and find one with this model
     peers = discover_peers(p)
     isempty(peers) && return _error("No P2P peers available")
@@ -105,6 +115,15 @@ function FlootyAbstract.chat_stream(
 )
     !p.node_running && FlootyStreams.start_provider(p)
     
+    # Local fallback: if we have a local provider, delegate directly
+    if p.local_provider !== nothing
+        return FlootyAbstract.chat_stream(
+            p.local_provider, model, messages,
+            stream, format, options, tools
+        )
+    end
+    
+    # P2P mode: discover peers and route via libp2p
     peers = discover_peers(p)
     isempty(peers) && return _error("No P2P peers available")
     
@@ -403,32 +422,16 @@ FlootyAbstract.list_provider_models(::Val{:barelibp2p}, config::Dict{Symbol,Any}
 # ═══════════════════════════════════════════════════════════════════════
 
 function FlootyAbstract.build_tool(tool::FlootyAbstract.AbstractTool, p::BareLibP2PProvider; model=nothing, kwargs...)
-    Dict(
-        "type" => "function",
-        "function" => Dict(
-            "name" => FlootyAbstract.tool_name(tool),
-            "description" => FlootyAbstract.tool_description(tool),
-            "parameters" => _tool_params(FlootyAbstract.tool_parameters(tool))
+    OllamaTool(
+        "function",
+        OllamaFunction(
+            FlootyAbstract.tool_name(tool),
+            FlootyAbstract.tool_description(tool),
+            FlootyAbstract.tool_parameters(tool)
         )
     )
 end
 
-function _tool_params(params)
-    if params isa Dict && haskey(params, "properties")
-        return params
-    elseif params isa Vector
-        props = Dict{String,Any}()
-        for p in params
-            if p isa String
-                props[p] = Dict("type" => "string")
-            elseif p isa Dict
-                props[get(p, "name", "param")] = Dict("type" => get(p, "type", "string"))
-            end
-        end
-        return Dict("type" => "object", "properties" => props)
-    end
-    Dict("type" => "object", "properties" => Dict())
-end
 
 FlootyAbstract.create_message(p::BareLibP2PProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing, kwargs...) =
     OllamaMessage(role=role, content=content, tool_name=tool_name)
