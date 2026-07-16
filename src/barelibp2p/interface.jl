@@ -250,14 +250,15 @@ function discover_peers(p::BareLibP2PProvider)
     if p.gossip !== nothing
         for msg in BareLibP2P.GossipSub.get_messages(p.gossip, p.service_topic)
             try
-                data = JSON3.read(msg.data)
+                data = JSON3.read(msg.data, Dict{String,Any})
                 push!(peers, BareLibP2PPeerInfo(
                     data["peer_id"],
                     [BareLibP2P.MultiaddrStruct(a) for a in get(data, "addrs", String[])],
                     Dict{String,String}(get(data, "models", Dict{String,String}())),
                     time()
                 ))
-            catch
+            catch e
+                @warn "[BareLibP2P] Failed to parse peer announcement" error=e
             end
         end
     end
