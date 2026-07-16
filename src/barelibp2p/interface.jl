@@ -1,652 +1,437 @@
 """
     barelibp2p/interface.jl
 
-High-level interface for BareLibP2P provider, mirroring PeerCompute API.
+BareLibP2P routes chat calls via P2P.
+Server uses local_provider for execution.
+Client discovers models via gossip and routes to peers.
 """
 
+using JSON3
 using Sockets
-using JSON
-using Dates
-
 using BareLibP2P
-using BareLibP2P.DHT
-using BareLibP2P.GossipSub
-using BareLibP2P.Identity
-
-using FlootyAbstract
 
 # ═══════════════════════════════════════════════════════════════════════
 # Provider Lifecycle
 # ═══════════════════════════════════════════════════════════════════════
 
-"""
-    start_provider(provider::BareLibP2PProvider) -> Bool
-
-Start the BareLibP2P P2P node with DHT and GossipSub.
-"""
-function start_provider(provider::BareLibP2PProvider)
-    provider.node_running && return true  # Already running
+function FlootyStreams.start_provider(p::BareLibP2PProvider)
+    p.node_running && return true
     
-    try
-        # Generate identity
-        priv, pub = generate_keypair()
-        provider.identity = priv
-        provider.peer_id = peer_id_from_public_key(pub).id
-        @info "BareLibP2P identity created: $(provider.peer_id[1:20])..."
-        
-        # Set up local addresses
-        push!(provider.local_addrs, BareLibP2P.MultiaddrStruct("/ip4/0.0.0.0/tcp/$(provider.p2p_port)"))
-        
-        # Create DHT
-        dht_config = DHTConfig(
-            protocol_prefix="/peercompute/kad/1.0.0",
-            bucket_size=20,
-            alpha=3
-        )
-        provider.dht = new_dht(dht_config, provider.peer_id, provider.local_addrs)
-        @info "BareLibP2P DHT created on port $(provider.p2p_port)"
-        
-        # Create GossipSub
-        gossip_config = GossipSubConfig(
-            protocol_prefix="/meshsub/1.1.0",
-            D=6, D_low=5, D_high=12,
-            heartbeat_interval=1.0
-        )
-        provider.gossip = new_gossipsub(gossip_config, provider.peer_id, provider.local_addrs)
-        @info "BareLibP2P GossipSub created"
-        
-        # Subscribe to service topic
-        if provider.gossip !== nothing
-            subscribe(provider.gossip, provider.service_topic)
-            @info "Subscribed to topic: $(provider.service_topic)"
+    priv, pub = BareLibP2P.Identity.generate_keypair()
+    p.identity = priv
+    p.peer_id = BareLibP2P.Identity.peer_id_from_public_key(pub).id
+    
+    push!(p.local_addrs, BareLibP2P.MultiaddrStruct("/ip4/0.0.0.0/tcp/$(p.p2p_port)"))
+    
+    dht_config = BareLibP2P.DHT.DHTConfig(bucket_size=20, alpha=3)
+    p.dht = BareLibP2P.DHT.new_dht(dht_config, p.peer_id, p.local_addrs)
+    
+    gossip_config = BareLibP2P.GossipSub.GossipSubConfig(
+        protocol_prefix="/meshsub/1.1.0", D=6, D_low=5, D_high=12, heartbeat_interval=1.0
+    )
+    p.gossip = BareLibP2P.GossipSub.new_gossipsub(gossip_config, p.peer_id, p.local_addrs)
+    
+    p.gossip !== nothing && BareLibP2P.GossipSub.subscribe(p.gossip, p.service_topic)
+    
+    GLOBAL_BARELIBP2P_PROVIDER[] = p
+    p.node_running = true
+    
+    # Server mode: announce local models immediately and periodically
+    @async begin
+        if p.local_provider !== nothing
+            announce_local_models(p)
         end
-        
-        # Bootstrap if peers provided
-        if !isempty(provider.bootstrap_peers)
-            bootstrap_peers = parse_bootstrap_peers(provider.bootstrap_peers)
-            if !isempty(bootstrap_peers) && provider.dht !== nothing
-                bootstrap(provider.dht, bootstrap_peers)
-                @info "Bootstrapped with $(length(bootstrap_peers)) peers"
-            end
-        end
-        
-        # Store as global
-        GLOBAL_BARELIBP2P_PROVIDER[] = provider
-        provider.node_running = true
-        
-        # Start announcement loop
-        @async announcement_loop(provider)
-        
-        @info "BareLibP2P provider started successfully"
-        return true
-        
-    catch e
-        @error "Failed to start BareLibP2P provider" exception=e
-        provider.node_running = false
-        return false
+        announcement_loop(p)
     end
-end
-
-"""
-    stop_provider(provider::BareLibP2PProvider) -> Bool
-
-Stop the BareLibP2P P2P node.
-"""
-function FlootyStreams.stop_provider(provider::BareLibP2PProvider)
-    !provider.node_running && return true
     
-    provider.node_running = false
-    provider.dht = nothing
-    provider.gossip = nothing
-    provider.identity = nothing
-    GLOBAL_BARELIBP2P_PROVIDER[] = nothing
-    
-    @info "BareLibP2P provider stopped"
+    @info "[BareLibP2P] Started" peer_id=p.peer_id[1:16] server_mode=(p.local_provider!==nothing)
     return true
 end
 
+function FlootyStreams.stop_provider(p::BareLibP2PProvider)
+    p.node_running = false
+    p.dht = nothing
+    p.gossip = nothing
+    GLOBAL_BARELIBP2P_PROVIDER[] = nothing
+    true
+end
+
 # ═══════════════════════════════════════════════════════════════════════
-# Announcement Loop
+# Chat - CLIENT MODE: Route via P2P
 # ═══════════════════════════════════════════════════════════════════════
 
-function announcement_loop(provider::BareLibP2PProvider)
-    while provider.node_running
+function FlootyAbstract.chat(
+    p::BareLibP2PProvider,
+    agent::FlootyAbstract.AbstractAgent,
+    messages::Vector{<:FlootyAbstract.AbstractMessage};
+    tools::Vector{<:FlootyAbstract.AbstractTool}=FlootyAbstract.AbstractTool[],
+    stream::Bool=false
+)
+    !p.node_running && FlootyStreams.start_provider(p)
+    
+    model = agent.model
+    @info "[BareLibP2P] chat" model=model
+    
+    # Discover peers and find one with this model
+    peers = discover_peers(p)
+    isempty(peers) && return _error("No P2P peers available")
+    
+    peer = find_peer_with_model(peers, model)
+    peer === nothing && return _error("No peer found for model: $model")
+    
+    # Get original provider type from peer's announcement
+    orig_provider = get(peer.models, model, "ollama")
+    @info "[BareLibP2P] Routing" peer=peer.peer_id[1:16] provider=orig_provider
+    
+    req = BareLibP2PChatRequest(
+        original_provider = orig_provider,
+        model = model,
+        messages = messages,
+        tools = tools,
+        stream = stream
+    )
+    
+    return send_p2p_request(p, peer, req)
+end
+
+function FlootyAbstract.chat_stream(
+    p::BareLibP2PProvider,
+    model::String,
+    messages::Vector{<:FlootyAbstract.AbstractMessage},
+    stream::Bool=false,
+    format=nothing,
+    options=nothing,
+    tools=nothing
+)
+    !p.node_running && FlootyStreams.start_provider(p)
+    
+    peers = discover_peers(p)
+    isempty(peers) && return _error("No P2P peers available")
+    
+    peer = find_peer_with_model(peers, model)
+    peer === nothing && return _error("No peer for model: $model")
+    
+    orig_provider = get(peer.models, model, "ollama")
+    
+    req = BareLibP2PChatRequest(
+        original_provider = orig_provider,
+        model = model,
+        messages = messages,
+        tools = tools === nothing ? FlootyAbstract.AbstractTool[] : tools,
+        stream = stream
+    )
+    
+    response = send_p2p_request(p, peer, req)
+    
+    stream ? Channel(Inf) do ch; put!(ch, response); put!(ch, nothing); end : response
+end
+
+# ═══════════════════════════════════════════════════════════════════════
+# P2P Transport
+# ═══════════════════════════════════════════════════════════════════════
+
+function send_p2p_request(p::BareLibP2PProvider, peer::BareLibP2PPeerInfo, req::BareLibP2PChatRequest)
+    host, port = _get_peer_addr(peer)
+    
+    socket = connect(host, port)
+    try
+        JSON3.write(socket, req)
+        write(socket, "\n")
+        
+        resp = JSON3.read(readline(socket), BareLibP2PChatResponse)
+        
+        !resp.success && return _error(resp.error === nothing ? "Unknown peer error" : resp.error)
+        
+        # Deserialize based on original provider type
+        if req.original_provider == "ollama"
+            return JSON3.read(resp.response_json, ChatResponse)
+        elseif req.original_provider == "openai"
+            return JSON3.read(resp.response_json, OpenAIResponse)
+        else
+            return JSON3.read(resp.response_json)
+        end
+    catch e
+        return _error("P2P failed: $e")
+    finally
+        close(socket)
+    end
+end
+
+function _get_peer_addr(peer::BareLibP2PPeerInfo)
+    isempty(peer.addrs) && return ("localhost", 11435)
+    parts = split(peer.addrs[1].addr, "/")
+    ip = length(parts) >= 3 ? parts[3] : "localhost"
+    port = length(parts) >= 5 ? parse(Int, parts[5]) : 11435
+    (ip, port)
+end
+
+_error(msg::String) = ChatResponse(
+    OllamaMessage(role="assistant", content="Error: $msg"),
+    nothing, nothing, true, nothing, nothing, nothing, nothing
+)
+
+# ═══════════════════════════════════════════════════════════════════════
+# Remote Server - Receives P2P requests, executes via local_provider
+# ═══════════════════════════════════════════════════════════════════════
+
+function start_remote_server(port::Int=11435)
+    server = listen(port)
+    @info "[BareLibP2P] Server listening" port=port
+    
+    @async while true
         try
-            sleep(30)  # Announce every 30 seconds
-            provider.node_running || break
-            
-            # Announce service
-            if provider.gossip !== nothing && !isempty(provider.announced_models)
-                announcement = Dict(
-                    "node_id" => provider.peer_id,
-                    "models" => provider.announced_models,
-                    "timestamp" => time(),
-                    "p2p_port" => provider.p2p_port,
-                    "api_port" => provider.api_port
-                )
-                publish(provider.gossip, provider.service_topic, JSON.json(announcement))
-            end
+            client = accept(server)
+            @async handle_remote_client(client)
         catch e
-            @warn "Announcement loop error" exception=e
+            @error "[BareLibP2P] Accept failed" exception=e
         end
     end
+    
+    server
+end
+
+function handle_remote_client(client::Sockets.TCPSocket)
+    try
+        req = JSON3.read(readline(client), BareLibP2PChatRequest)
+        resp = process_remote_request(req)
+        JSON3.write(client, resp)
+        write(client, "\n")
+    catch e
+        JSON3.write(client, BareLibP2PChatResponse(success=false, error=string(e), response_json=""))
+        write(client, "\n")
+    finally
+        close(client)
+    end
+end
+
+function process_remote_request(req::BareLibP2PChatRequest)
+    # Create actual provider instance based on original_provider type
+    provider = FlootyAbstract.create_provider_instance(Symbol(req.original_provider))
+    
+    # Create agent
+    agent = FlootyAbstract.create_agent("Remote", req.original_provider)
+    agent.model = req.model
+    
+    # Execute chat with actual provider
+    result = FlootyAbstract.chat(provider, agent, req.messages; tools=req.tools, stream=req.stream)
+    
+    # Serialize response back to JSON
+    response_json = JSON3.write(result)
+    
+    BareLibP2PChatResponse(success=true, response_json=response_json, error=nothing)
 end
 
 # ═══════════════════════════════════════════════════════════════════════
 # Peer Discovery
 # ═══════════════════════════════════════════════════════════════════════
 
-"""
-    discover_peers(provider::BareLibP2PProvider) -> Vector{BareLibP2PPeerInfo}
-
-Discover peers from GossipSub messages.
-"""
-function discover_peers(provider::BareLibP2PProvider)
-    provider.gossip === nothing && return BareLibP2PPeerInfo[]
-    
-    messages = GossipSub.get_messages(provider.gossip, provider.service_topic)
+function discover_peers(p::BareLibP2PProvider)
     peers = BareLibP2PPeerInfo[]
     
-    for msg in messages
-        try
-            data = JSON.parse(msg)
-            peer_id = get(data, "node_id", "")
-            models = get(data, "models", String[])
-            timestamp = get(data, "timestamp", 0.0)
-            
-            # Create peer info
-            addrs = [BareLibP2P.MultiaddrStruct("/ip4/127.0.0.1/tcp/4001")]  # Would be parsed from data
-            push!(peers, BareLibP2PPeerInfo(peer_id, addrs, models, timestamp))
-        catch
-            # Skip invalid messages
+    if p.gossip !== nothing
+        for msg in BareLibP2P.GossipSub.get_messages(p.gossip, p.service_topic)
+            try
+                data = JSON3.read(msg.data)
+                push!(peers, BareLibP2PPeerInfo(
+                    data["peer_id"],
+                    [BareLibP2P.MultiaddrStruct(a) for a in get(data, "addrs", String[])],
+                    Dict{String,String}(get(data, "models", Dict{String,String}())),
+                    time()
+                ))
+            catch
+            end
         end
     end
     
-    return peers
+    @debug "[BareLibP2P] Discovered peers" count=length(peers)
+    peers
 end
 
-"""
-    get_peers(provider::BareLibP2PProvider) -> Vector{String}
-
-Get list of discovered peer IDs.
-"""
-function get_peers(provider::BareLibP2PProvider)
-    peers = discover_peers(provider)
-    return [p.peer_id for p in peers]
-end
-
-"""
-    get_peer_info(provider::BareLibP2PProvider, peer_id::String) -> Union{BareLibP2PPeerInfo, Nothing}
-
-Get information about a specific peer.
-"""
-function get_peer_info(provider::BareLibP2PProvider, peer_id::String)
-    peers = discover_peers(provider)
+function find_peer_with_model(peers::Vector{BareLibP2PPeerInfo}, model::String)
     for peer in peers
-        if peer.peer_id == peer_id
+        if haskey(peer.models, model)
             return peer
         end
     end
-    return nothing
+    nothing
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# Model Operations
+# Model Announcement - SERVER MODE only
 # ═══════════════════════════════════════════════════════════════════════
 
-"""
-    register_models(provider::BareLibP2PProvider, models::Vector{String})
+function announcement_loop(p::BareLibP2PProvider)
+    while p.node_running
+        try
+            if p.gossip !== nothing && p.local_provider !== nothing
+                # Get current models from local provider
+                models = _get_local_models(p)
+                
+                if !isempty(models)
+                    announcement = Dict(
+                        "peer_id" => p.peer_id,
+                        "addrs" => [a.addr for a in p.local_addrs],
+                        "models" => models
+                    )
+                    BareLibP2P.GossipSub.publish(p.gossip, p.service_topic, JSON3.write(announcement))
+                    @debug "[BareLibP2P] Announced" count=length(models)
+                end
+            end
+        catch e
+            @debug "[BareLibP2P] Announce error" error=e
+        end
+        sleep(30)
+    end
+end
 
-Register models for announcement.
-"""
-function register_models(provider::BareLibP2PProvider, models::Vector{String})
-    provider.announced_models = models
-    
-    # Store in DHT
-    if provider.dht !== nothing
-        for model in models
-            key = "model:$model:providers"
-            value = Vector{UInt8}(provider.peer_id)
-            put_value(provider.dht, key, value)
-            provide(provider.dht, key)
+function announce_local_models(p::BareLibP2PProvider)
+    # Immediate announcement on startup
+    if p.gossip !== nothing && p.local_provider !== nothing
+        try
+            models = _get_local_models(p)
+            if !isempty(models)
+                announcement = Dict(
+                    "peer_id" => p.peer_id,
+                    "addrs" => [a.addr for a in p.local_addrs],
+                    "models" => models
+                )
+                BareLibP2P.GossipSub.publish(p.gossip, p.service_topic, JSON3.write(announcement))
+                @info "[BareLibP2P] Announced local models" count=length(models)
+            end
+        catch e
+            @warn "[BareLibP2P] Announce failed" error=e
         end
     end
-    
-    # Immediate announcement
-    if provider.gossip !== nothing
-        announcement = Dict(
-            "node_id" => provider.peer_id,
-            "models" => models,
-            "timestamp" => time(),
-            "p2p_port" => provider.p2p_port,
-            "api_port" => provider.api_port
-        )
-        publish(provider.gossip, provider.service_topic, JSON.json(announcement))
-    end
-    
-    @info "Registered models: $(join(models, ", "))"
 end
 
-"""
-    get_registered_models(provider::BareLibP2PProvider) -> Vector{String}
-
-Get list of registered models.
-"""
-function get_registered_models(provider::BareLibP2PProvider)
-    return provider.announced_models
-end
-
-"""
-    find_providers_for_model(provider::BareLibP2PProvider, model::String) -> Vector{String}
-
-Find peers that provide a specific model.
-"""
-function find_providers_for_model(provider::BareLibP2PProvider, model::String)
-    if provider.dht === nothing
-        return String[]
-    end
-    
-    key = "model:$model:providers"
-    providers = find_providers(provider.dht, key)
-    return [p.id for p in providers]
-end
-
-# ═══════════════════════════════════════════════════════════════════════
-# Inference
-# ═══════════════════════════════════════════════════════════════════════
-
-"""
-    inference_request(provider::BareLibP2PProvider, peer_id::String, model::String, prompt::String) -> BareLibP2PResponse
-
-Send inference request to a peer.
-"""
-function inference_request(provider::BareLibP2PProvider, peer_id::String, model::String, prompt::String)
-    start_time = time()
-    
+function _get_local_models(p::BareLibP2PProvider)
+    models = Dict{String,String}()
     try
-        # Get peer info from DHT
-        if provider.dht === nothing
-            return BareLibP2PResponse(
-                BareLibP2PMessage(role="assistant", content="DHT not available"),
-                model, peer_id, Int((time() - start_time) * 1000), false
-            )
-        end
-        
-        peer_info = find_peer(provider.dht, peer_id)
-        if peer_info === nothing
-            # Try from gossip
-            gossip_peer = get_peer_info(provider, peer_id)
-            if gossip_peer === nothing
-                return BareLibP2PResponse(
-                    BareLibP2PMessage(role="assistant", content="Peer not found: $peer_id"),
-                    model, peer_id, Int((time() - start_time) * 1000), false
-                )
+        if p.local_provider !== nothing
+            # Determine provider type and get models via Val dispatch
+            prov_name = FlootyAbstract.provider_name(p.local_provider)
+            if prov_name === :ollama
+                config = Dict{Symbol,Any}(:baseURL => "http://localhost:11434")
+                local_models = FlootyAbstract.list_provider_models(Val(:ollama), config)
+                for m in local_models
+                    models[FlootyAbstract.model_name(m)] = "ollama"
+                end
+            elseif prov_name === :openai
+                api_key = get(ENV, "OPENAI_API_KEY", "")
+                config = Dict{Symbol,Any}(:baseURL => "https://api.openai.com/v1", :apiKey => api_key)
+                local_models = FlootyAbstract.list_provider_models(Val(:openai), config)
+                for m in local_models
+                    models[FlootyAbstract.model_name(m)] = "openai"
+                end
             end
-            # Use gossip peer info
-            host, port = BareLibP2P.Multiaddr.get_host_port(gossip_peer.addrs[1])
-        else
-            # Use DHT peer info
-            host, port = BareLibP2P.Multiaddr.get_host_port(peer_info.addrs[1])
         end
-        
-        # Connect via TCP
-        socket = connect(host, port)
-        
-        # Send request
-        request = Dict("action" => "inference", "model" => model, "prompt" => prompt)
-        write(socket, JSON.json(request) * "\n")
-        
-        # Read response
-        response_line = readline(socket)
-        close(socket)
-        
-        response_data = JSON.parse(response_line)
-        latency_ms = Int((time() - start_time) * 1000)
-        
-        if get(response_data, "status", "error") == "success"
-            content = get(response_data, "response", "")
-            return BareLibP2PResponse(
-                BareLibP2PMessage(role="assistant", content=content),
-                model, peer_id, latency_ms, true
-            )
-        else
-            error_msg = get(response_data, "response", "Unknown error")
-            return BareLibP2PResponse(
-                BareLibP2PMessage(role="assistant", content="Error: $error_msg"),
-                model, peer_id, latency_ms, false
-            )
-        end
-        
     catch e
-        latency_ms = Int((time() - start_time) * 1000)
-        return BareLibP2PResponse(
-            BareLibP2PMessage(role="assistant", content="Error: $(string(e))"),
-            model, peer_id, latency_ms, false
-        )
+        @warn "[BareLibP2P] Could not list local models" error=e
     end
-end
-
-"""
-    inference_stream(provider::BareLibP2PProvider, peer_id::String, model::String, prompt::String)
-
-Send streaming inference request (returns an iterator).
-"""
-function inference_stream(provider::BareLibP2PProvider, peer_id::String, model::String, prompt::String)
-    # For now, just call regular inference and wrap in iterator
-    response = inference_request(provider, peer_id, model, prompt)
-    return [response.message]
+    models
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# Provider Chat Interface
+# Provider Instance & Model Listing
 # ═══════════════════════════════════════════════════════════════════════
 
-function FlootyAbstract.chat(
-    provider::BareLibP2PProvider,
-    agent::AbstractAgent,
-    messages::Vector{<:AbstractMessage};
-    tools::Vector{<:AbstractTool}=AbstractTool[],
-    stream::Bool=false
-)
-    # Ensure provider is running
-    if !provider.node_running
-        start_provider(provider)
-    end
+function FlootyAbstract.create_provider_instance(::Val{:barelibp2p}; config::Dict{Symbol,Any}=Dict{Symbol,Any}())
+    existing = GLOBAL_BARELIBP2P_PROVIDER[]
+    (existing !== nothing && existing.node_running) && return existing
     
-    # Find peers
-    peers = discover_peers(provider)
-    isempty(peers) && return BareLibP2PResponse(
-        BareLibP2PMessage(role="assistant", content="No peers available"),
-        nothing, nothing, 0, false
-    )
-    
-    # Use first available peer
-    target_peer = peers[1].peer_id
-    model = "llama2"  # Would be selected based on availability
-    
-    # Convert messages to Ollama format
-    ollama_messages = [
-        Dict("role" => FlootyAbstract.role(m), "content" => something(FlootyAbstract.content(m), ""))
-        for m in messages if FlootyAbstract.content(m) !== nothing
-    ]
-    
-    # Build tools for Ollama
-    ollama_tools = if !isempty(tools)
-        [build_tool_for_ollama(t) for t in tools]
-    else
-        nothing
-    end
-    
-    # Use protocol to send request
-    response = chat_with_tools_p2p(
-        provider, target_peer, model, ollama_messages;
-        tools=ollama_tools
-    )
-    
-    if response.error !== nothing
-        return BareLibP2PResponse(
-            BareLibP2PMessage(role="assistant", content="Error: $(response.error)"),
-            model, target_peer, 0, false
-        )
-    end
-    
-    # Check for tool calls in response
-    msg = response.message
-    content = get(msg, "content", "")
-    tool_calls = get(msg, "tool_calls", nothing)
-    
-    if tool_calls !== nothing && !isempty(tool_calls)
-        # Execute tools locally
-        tool_results = execute_tools_locally(tool_calls, tools)
-        
-        # Send results back for final response
-        final_response = send_tool_results_p2p(
-            provider, target_peer, model, ollama_messages, tool_results
-        )
-        
-        final_msg = final_response.message
-        content = get(final_msg, "content", "")
-    end
-    
-    return BareLibP2PResponse(
-        BareLibP2PMessage(role="assistant", content=content),
-        model, target_peer, 0, true
+    BareLibP2PProvider(
+        p2p_port = get(config, :p2p_port, 4001),
+        api_port = get(config, :api_port, 5001),
+        bootstrap_node = get(config, :bootstrap_node, false),
+        local_provider = get(config, :local_provider, nothing)
     )
 end
 
-"""
-    build_tool_for_ollama(tool::AbstractTool) -> Dict
-
-Convert AbstractTool to Ollama tool format.
-"""
-function build_tool_for_ollama(tool::AbstractTool)
-    params = FlootyAbstract.tool_parameters(tool)
+function FlootyAbstract.list_provider_models(p::BareLibP2PProvider)
+    # Query local provider if available (server/bootstrap mode)
+    models = BareLibP2PModel[]
     
-    # Build parameters schema
-    properties = Dict{String,Any}()
-    required = String[]
+    if p.local_provider !== nothing
+        try
+            prov_name = FlootyAbstract.provider_name(p.local_provider)
+            local_models = if prov_name === :ollama
+                FlootyAbstract.list_provider_models(Val(:ollama), 
+                    Dict{Symbol,Any}(:baseURL => "http://localhost:11434"))
+            elseif prov_name === :openai
+                FlootyAbstract.list_provider_models(Val(:openai),
+                    Dict{Symbol,Any}(:baseURL => "https://api.openai.com/v1", 
+                                   :apiKey => get(ENV, "OPENAI_API_KEY", "")))
+            else
+                FlootyAbstract.AbstractModel[]
+            end
+            
+            # Wrap as barelibp2p models (clients connect via P2P)
+            for m in local_models
+                push!(models, BareLibP2PModel(
+                    name = FlootyAbstract.model_name(m),
+                    original_provider = string(prov_name),  # "ollama" for routing
+                    peer_id = p.peer_id
+                ))
+            end
+        catch e
+            @warn "[BareLibP2P] Could not list local models" error=e
+        end
+    end
     
-    if params isa Dict && haskey(params, "properties")
-        for (k, v) in params["properties"]
-            properties[k] = v
-        end
-        if haskey(params, "required")
-            required = params["required"]
-        end
-    elseif params isa Vector
-        for p in params
-            if p isa String
-                properties[p] = Dict("type" => "string", "description" => "")
-            elseif p isa Dict
-                name = get(p, "name", "param")
-                properties[name] = Dict(
-                    "type" => get(p, "type", "string"),
-                    "description" => get(p, "description", "")
-                )
+    # Also discover models from other peers
+    if p.node_running
+        for peer in discover_peers(p)
+            for (model_name, orig_provider) in peer.models
+                push!(models, BareLibP2PModel(
+                    name = model_name,
+                    original_provider = orig_provider,
+                    peer_id = peer.peer_id
+                ))
             end
         end
     end
     
-    return Dict(
+    @info "[BareLibP2P] Listed models" count=length(models) islocal=(p.local_provider!==nothing)
+    models
+end
+
+FlootyAbstract.list_provider_models(::Val{:barelibp2p}, config::Dict{Symbol,Any}=Dict{Symbol,Any}()) =
+    FlootyAbstract.list_provider_models(FlootyAbstract.create_provider_instance(:barelibp2p; config=config))
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tools
+# ═══════════════════════════════════════════════════════════════════════
+
+function FlootyAbstract.build_tool(tool::FlootyAbstract.AbstractTool, p::BareLibP2PProvider; model=nothing, kwargs...)
+    Dict(
         "type" => "function",
         "function" => Dict(
             "name" => FlootyAbstract.tool_name(tool),
             "description" => FlootyAbstract.tool_description(tool),
-            "parameters" => Dict(
-                "type" => "object",
-                "properties" => properties,
-                "required" => required
-            )
+            "parameters" => _tool_params(FlootyAbstract.tool_parameters(tool))
         )
     )
 end
 
-"""
-    execute_tools_locally(tool_calls::Vector{Dict}, tools::Vector{<:AbstractTool}) -> Vector{Dict}
-
-Execute tool calls locally and return results.
-"""
-function execute_tools_locally(tool_calls::Vector{Dict}, tools::Vector{<:AbstractTool})
-    results = Dict{String,Any}[]
-    
-    # Build tool map
-    tool_map = Dict{String,AbstractTool}()
-    for t in tools
-        tool_map[FlootyAbstract.tool_name(t)] = t
-    end
-    
-    for tc in tool_calls
-        func = get(tc, "function", Dict())
-        name = get(func, "name", "")
-        arguments = get(func, "arguments", Dict())
-        
-        tool = get(tool_map, name, nothing)
-        if tool !== nothing
-            try
-                result = FlootyAbstract.execute_tool(tool, arguments)
-                push!(results, Dict(
-                    "name" => name,
-                    "content" => string(result)
-                ))
-            catch e
-                push!(results, Dict(
-                    "name" => name,
-                    "content" => "Error: $(string(e))"
-                ))
+function _tool_params(params)
+    if params isa Dict && haskey(params, "properties")
+        return params
+    elseif params isa Vector
+        props = Dict{String,Any}()
+        for p in params
+            if p isa String
+                props[p] = Dict("type" => "string")
+            elseif p isa Dict
+                props[get(p, "name", "param")] = Dict("type" => get(p, "type", "string"))
             end
-        else
-            push!(results, Dict(
-                "name" => name,
-                "content" => "Error: Tool '$name' not found"
-            ))
         end
+        return Dict("type" => "object", "properties" => props)
     end
-    
-    return results
+    Dict("type" => "object", "properties" => Dict())
 end
 
-function chat_stream(
-    provider::BareLibP2PProvider,
-    agent::AbstractAgent,
-    messages::Vector{<:AbstractMessage};
-    tools::Vector{<:AbstractTool}=AbstractTool[]
-)
-    return FlootyAbstract.chat(provider, agent, messages; tools=tools, stream=true)
-end
+FlootyAbstract.create_message(p::BareLibP2PProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing, kwargs...) =
+    OllamaMessage(role=role, content=content, tool_name=tool_name)
 
-# ═══════════════════════════════════════════════════════════════════════
-# Utilities
-# ═══════════════════════════════════════════════════════════════════════
-
-function parse_bootstrap_peers(addr_strings::Vector{String})
-    peers = PeerInfo[]
-    for addr_str in addr_strings
-        try
-            ma = BareLibP2P.MultiaddrStruct(addr_str)
-            protocols = BareLibP2P.get_protocols(ma)
-            
-            # Extract host and port
-            host, port = "", 0
-            for (proto, val) in protocols
-                if proto in ["ip4", "ip6", "dns"]
-                    host = val
-                elseif proto in ["tcp", "udp"]
-                    port = val
-                end
-            end
-            
-            if host != "" && port != 0
-                peer_id = "bootstrap-$host-$port"
-                peer_addrs = [BareLibP2P.MultiaddrStruct("/ip4/$host/tcp/$port")]
-                push!(peers, PeerInfo(peer_id, peer_addrs, time()))
-            end
-        catch e
-            @warn "Failed to parse bootstrap address: $addr_str" exception=e
-        end
-    end
-    return peers
-end
-
-"""
-    ensure_node_running!(provider::BareLibP2PProvider) -> Bool
-
-Ensure the provider is running, starting it if necessary.
-"""
-function ensure_node_running!(provider::BareLibP2PProvider)
-    if !provider.node_running
-        return start_provider(provider)
-    end
-    return true
-end
-
-"""
-    select_peer_for_model(provider::BareLibP2PProvider, model::String) -> Union{String, Nothing}
-
-Select the best peer for a given model based on availability.
-"""
-function select_peer_for_model(provider::BareLibP2PProvider, model::String)
-    providers = find_providers_for_model(provider, model)
-    isempty(providers) && return nothing
-    return providers[1]  # Could implement better selection logic
-end
-
-# ═══════════════════════════════════════════════════════════════════════
-# FlootyAbstract Integration - Provider Registration
-# ═══════════════════════════════════════════════════════════════════════
-
-"""
-    FlootyAbstract.create_provider_instance(::Val{:barelibp2p}; config::Dict{Symbol,Any}) -> BareLibP2PProvider
-
-Create a BareLibP2P provider instance for FlootyAbstract integration.
-
-Usage:
-    provider = create_provider_instance(:barelibp2p; config=Dict(:bootstrap_node => true))
-"""
-function FlootyAbstract.create_provider_instance(::Val{:barelibp2p}; config::Dict{Symbol, Any} = Dict{Symbol, Any}())
-    # Check for existing global provider
-    existing = GLOBAL_BARELIBP2P_PROVIDER[]
-    if existing !== nothing && existing.node_running
-        return existing
-    end
-    
-    # Resolve config
-    bootstrap_node = get(config, :bootstrap_node, false)
-    p2p_port = get(config, :p2p_port, get(ENV, "BARELIBP2P_PORT", "4001"))
-    api_port = get(config, :api_port, get(ENV, "BARELIBP2P_API_PORT", "5001"))
-    
-    # Parse bootstrap peers from config or ENV
-    bootstrap_peers = String[]
-    if haskey(config, :bootstrap_peers)
-        bootstrap_peers = config[:bootstrap_peers]
-    elseif haskey(ENV, "BARELIBP2P_BOOTSTRAP_PEERS")
-        bootstrap_peers = split(ENV["BARELIBP2P_BOOTSTRAP_PEERS"], ",")
-    end
-    
-    service_topic = get(config, :service_topic, "peercompute-nodes-v1")
-    
-    # Create and return provider (caller's responsibility to start)
-    provider = BareLibP2PProvider(
-        p2p_port = parse(Int, string(p2p_port)),
-        api_port = parse(Int, string(api_port)),
-        service_topic = service_topic,
-        bootstrap_peers = bootstrap_peers,
-        bootstrap_node = bootstrap_node
-    )
-    
-    GLOBAL_BARELIBP2P_PROVIDER[] = provider
-    return provider
-end
-
-"""
-    list_provider_models(provider::BareLibP2PProvider) -> Vector{BareLibP2PModel}
-
-List models available through BareLibP2P provider.
-"""
-function FlootyAbstract.list_provider_models(provider::BareLibP2PProvider)
-    models = BareLibP2PModel[]
-    
-    # Add own models
-    for model_name in provider.announced_models
-        push!(models, BareLibP2PModel(
-            name = model_name,
-            peer_id = provider.peer_id,
-            reputation = 1.0,
-            latency_ms = 0
-        ))
-    end
-    
-    # Discover peers and their models
-    peers = discover_peers(provider)
-    for peer in peers
-        for model_name in peer.models
-            push!(models, BareLibP2PModel(
-                name = model_name,
-                peer_id = peer.peer_id,
-                reputation = 1.0,
-                latency_ms = 0
-            ))
-        end
-    end
-    
-    return models
-end
+FlootyAbstract.create_embedder(p::BareLibP2PProvider, model::String; kwargs...) =
+    error("BareLibP2P does not support embeddings")

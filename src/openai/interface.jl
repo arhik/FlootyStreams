@@ -1,7 +1,7 @@
 FlootyAbstract.role(msg::OpenAIMessage) = msg.role
 FlootyAbstract.content(msg::OpenAIMessage) = msg.content isa String ? msg.content : nothing
 
-FlootyAbstract.create_message(provider::OpenAIProvider, role::String, content::String; kwargs...) =
+FlootyAbstract.create_message(provider::OpenAIProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing, kwargs...) =
     OpenAIMessage(role=role, content=content)
 
 FlootyAbstract.create_message(provider::OpenAIProvider, role::String, content::String, images::Vector{<:AbstractProviderObject}; kwargs...) =

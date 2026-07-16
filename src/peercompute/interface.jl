@@ -154,7 +154,7 @@ end
 FlootyAbstract.role(msg::PeerComputeMessage) = msg.role
 FlootyAbstract.content(msg::PeerComputeMessage) = msg.content
 
-FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String) =
+FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing) =
     PeerComputeMessage(role=role, content=content)
 
 FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, images::Vector{<:AbstractProviderObject}) =

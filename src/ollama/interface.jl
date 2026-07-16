@@ -1,8 +1,8 @@
 FlootyAbstract.role(msg::OllamaMessage) = msg.role
 FlootyAbstract.content(msg::OllamaMessage) = msg.content
 
-FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String) =
-    OllamaMessage(role=role, content=content)
+FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing) =
+    OllamaMessage(role=role, content=content, tool_name=tool_name)
 
 FlootyAbstract.create_message(provider::OllamaProvider, role::String, content::String, images::Vector{<:AbstractProviderObject}) =
     OllamaMessage(role=role, content=content, images=convert(Vector{ImageData}, images))

@@ -10,14 +10,14 @@ using HTTP
 using Sockets
 
 # ═══════════════════════════════════════════════════════════════════════
-# Protocol Messages
+# Protocol Messages (BareLibP2P prefixed to avoid conflicts with Ollama)
 # ═══════════════════════════════════════════════════════════════════════
 
 """Base protocol message"""
 abstract type P2PMessage end
 
 """Chat request with tools"""
-struct ChatRequest <: P2PMessage
+struct BareLibP2PChatRequest <: P2PMessage
     model::String
     messages::Vector{Dict{String,String}}
     tools::Union{Vector{Dict{String,Any}},Nothing}
@@ -26,7 +26,7 @@ struct ChatRequest <: P2PMessage
 end
 
 """Chat response"""
-struct ChatResponse <: P2PMessage
+struct BareLibP2PChatResponse <: P2PMessage
     message::Dict{String,Any}  # {role, content, tool_calls?}
     done::Bool
     model::String
@@ -34,7 +34,7 @@ struct ChatResponse <: P2PMessage
 end
 
 """Tool result submission"""
-struct ToolResultMessage <: P2PMessage
+struct BareLibP2PToolResultMessage <: P2PMessage
     call_id::String
     name::String
     content::String
@@ -228,7 +228,7 @@ end
 """
     chat_with_tools_p2p(provider::BareLibP2PProvider, peer_id::String,
                        model::String, messages::Vector{Dict},
-                       tools::Union{Vector,Nothing}=nothing) -> ChatResponse
+                       tools::Union{Vector,Nothing}=nothing) -> BareLibP2PChatResponse
 
 Send a chat request with tools to a remote peer via P2P.
 """
@@ -298,7 +298,7 @@ function _send_chat_request(
         response_line = readline(socket)
         
         if isempty(response_line)
-            return ChatResponse(
+            return BareLibP2PChatResponse(
                 Dict("role" => "assistant", "content" => "Empty response"),
                 true, model, "Empty response"
             )
@@ -308,17 +308,17 @@ function _send_chat_request(
         resp = JSON.parse(response_line)
         
         if haskey(resp, "error")
-            return ChatResponse(
+            return BareLibP2PChatResponse(
                 Dict("role" => "assistant", "content" => resp["error"]),
                 true, model, resp["error"]
             )
         end
         
         message = get(resp, "message", Dict("role" => "assistant", "content" => ""))
-        return ChatResponse(message, true, model, nothing)
+        return BareLibP2PChatResponse(message, true, model, nothing)
         
     catch e
-        return ChatResponse(
+        return BareLibP2PChatResponse(
             Dict("role" => "assistant", "content" => "Error: $(string(e))"),
             true, model, string(e)
         )
@@ -330,7 +330,7 @@ end
 """
     send_tool_results_p2p(provider::BareLibP2PProvider, peer_id::String,
                          model::String, messages::Vector{Dict},
-                         tool_results::Vector{Dict}) -> ChatResponse
+                         tool_results::Vector{Dict}) -> BareLibP2PChatResponse
 
 Send tool results back to remote peer for final response.
 """
@@ -366,17 +366,17 @@ function send_tool_results_p2p(
         resp = JSON.parse(response_line)
         
         if haskey(resp, "error")
-            return ChatResponse(
+            return BareLibP2PChatResponse(
                 Dict("role" => "assistant", "content" => resp["error"]),
                 true, model, resp["error"]
             )
         end
         
         message = get(resp, "message", Dict("role" => "assistant", "content" => ""))
-        return ChatResponse(message, true, model, nothing)
+        return BareLibP2PChatResponse(message, true, model, nothing)
         
     catch e
-        return ChatResponse(
+        return BareLibP2PChatResponse(
             Dict("role" => "assistant", "content" => "Error: $(string(e))"),
             true, model, string(e)
         )
