@@ -295,11 +295,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
         else
             # Not a bootstrap node — make sure we have bootstrap peers
             if isempty(provider.bootstrap_peers)
-                @info "No bootstrap peers configured, attempting local discovery..."
-                provider.bootstrap_peers = discover_local_bootstrap()
-                if isempty(provider.bootstrap_peers)
-                    @warn "No bootstrap peers found. Running in standalone mode (no P2P network)."
-                end
+                @info "No custom bootstrap peers configured, will use IPFS bootstrap nodes for DHT discovery"
             end
         end
         
