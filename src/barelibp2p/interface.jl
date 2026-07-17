@@ -18,26 +18,44 @@ FlootyAbstract.provider_name(::BareLibP2PProvider) = :barelibp2p
 
 function FlootyStreams.start_provider(p::BareLibP2PProvider)
     p.node_running && return true
-    
+
     priv, pub = BareLibP2P.Identity.generate_keypair()
     p.identity = priv
     p.peer_id = BareLibP2P.Identity.peer_id_from_public_key(pub).id
-    
+
     push!(p.local_addrs, BareLibP2P.MultiaddrStruct("/ip4/0.0.0.0/tcp/$(p.p2p_port)"))
-    
+
+    # Start TCP transport
+    transport_config = BareLibP2P.Transport.TransportConfig(listen_port=p.p2p_port)
+    p.transport = BareLibP2P.Transport.start_transport(transport_config, p.peer_id, p.local_addrs)
+
+    # Create DHT with transport
     dht_config = BareLibP2P.DHT.DHTConfig(bucket_size=20, alpha=3)
-    p.dht = BareLibP2P.DHT.new_dht(dht_config, p.peer_id, p.local_addrs)
-    
+    p.dht = BareLibP2P.DHT.new_dht(dht_config, p.peer_id, p.local_addrs; transport=p.transport)
+
+    # Create GossipSub with transport
     gossip_config = BareLibP2P.GossipSub.GossipSubConfig(
         protocol_prefix="/meshsub/1.1.0", D=6, D_low=5, D_high=12, heartbeat_interval=1.0
     )
-    p.gossip = BareLibP2P.GossipSub.new_gossipsub(gossip_config, p.peer_id, p.local_addrs)
-    
+    p.gossip = BareLibP2P.GossipSub.new_gossipsub(gossip_config, p.peer_id, p.local_addrs; transport=p.transport)
+
+    # Register message handlers on transport
+    if p.dht !== nothing
+        BareLibP2P.Transport.register_handler(p.transport, "dht", (sender_id, payload) -> begin
+            @debug "[BareLibP2P] DHT message from $sender_id"
+        end)
+    end
+    if p.gossip !== nothing
+        BareLibP2P.Transport.register_handler(p.transport, "gossipsub", (sender_id, payload) -> begin
+            @debug "[BareLibP2P] GossipSub message from $sender_id"
+        end)
+    end
+
     p.gossip !== nothing && BareLibP2P.GossipSub.subscribe(p.gossip, p.service_topic)
-    
+
     GLOBAL_BARELIBP2P_PROVIDER[] = p
     p.node_running = true
-    
+
     # Server mode: announce local models immediately and periodically
     @async begin
         if p.local_provider !== nothing
@@ -45,17 +63,20 @@ function FlootyStreams.start_provider(p::BareLibP2PProvider)
         end
         announcement_loop(p)
     end
-    
+
     @info "[BareLibP2P] Started" peer_id=p.peer_id[1:16] server_mode=(p.local_provider!==nothing)
     return true
 end
 
 function FlootyStreams.stop_provider(p::BareLibP2PProvider)
     p.node_running = false
+    if p.transport !== nothing
+        BareLibP2P.Transport.stop_transport(p.transport)
+        p.transport = nothing
+    end
     p.dht = nothing
     p.gossip = nothing
-    GLOBAL_BARELIBP2P_PROVIDER[] = nothing
-    true
+    @info "[BareLibP2P] Stopped"
 end
 
 # ═══════════════════════════════════════════════════════════════════════

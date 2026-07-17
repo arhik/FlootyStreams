@@ -71,27 +71,28 @@ mutable struct BareLibP2PProvider <: AbstractLLMProvider
     p2p_port::Int
     api_port::Int
     bootstrap_node::Bool
-    
+
     # BareLibP2P node state
     identity::Union{Nothing, BareLibP2P.Identity.PrivateKey}
     peer_id::String
     dht::Union{Nothing, BareLibP2P.DHT.DHTNode}
     gossip::Union{Nothing, BareLibP2P.GossipSub.GossipSubNode}
+    transport::Union{Nothing, BareLibP2P.Transport.TransportNode}
     local_addrs::Vector{BareLibP2P.Multiaddr.MultiaddrStruct}
-    
+
     # Model routing: model_name => "ollama" / "openai" / etc
     model_providers::Dict{String,String}
-    
+
     # Peer routing: model_name => (peer_id, provider_type)
     model_peers::Dict{String,Tuple{String,String}}
-    
+
     # LOCAL actual provider instance!
     # When set, chat() delegates to this provider
     local_provider::Union{AbstractLLMProvider,Nothing}
-    
+
     # Peer selection strategy for routing requests
     peer_selector::PeerSelectionStrategy
-    
+
     function BareLibP2PProvider(;
         bootstrap_peers::Vector{String}=String[],
         service_topic::String="barelibp2p-nodes-v1",
@@ -102,7 +103,7 @@ mutable struct BareLibP2PProvider <: AbstractLLMProvider
         peer_selector::PeerSelectionStrategy=DEFAULT_PEER_SELECTOR
     )
         new(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node,
-            nothing, "", nothing, nothing, BareLibP2P.Multiaddr.MultiaddrStruct[],
+            nothing, "", nothing, nothing, nothing, BareLibP2P.Multiaddr.MultiaddrStruct[],
             Dict{String,String}(), Dict{String,Tuple{String,String}}(),
             local_provider, peer_selector)
     end
