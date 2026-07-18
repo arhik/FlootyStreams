@@ -320,39 +320,21 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             end
         end
         enable_mdns = get(config, :enable_mdns, true)
-        
+        enable_nat = get(config, :enable_nat, true)
+
         settings = PeerCompute.PeerComputeSettings(
-            provider.p2p_port,
-            provider.api_port,
-            provider.bootstrap_peers,
-            String[],                       # allowed_models
-            "info",                         # log_level
-            false,                          # enable_tls
-            60,                             # request_timeout
-            120,                            # ollama_timeout
-            10,                             # max_concurrent_requests
-            15,                             # discovery_interval
-            "0.0.0.0",                      # bind_address
-            provider.service_topic,         # service_topic
-            false,                          # use_ipfs_bootstrap
-            String[],                       # ipfs_bootstrap_peers
-            true,                           # enable_nat
-            true,                           # enable_relay
-            true,                           # enable_hole_punching
-            enable_mdns,                    # enable_mdns
-            "",                             # external_address
-            String[],                       # announce_addresses
-            true,                           # peer_exchange_enabled
-            50,                             # max_peer_connections
-            3,                              # retry_attempts
-            1.0,                            # retry_delay
-            0.7,                            # reputation_threshold
-            peer_key                        # static_key_file
+            p2p_port=provider.p2p_port,
+            api_port=provider.api_port,
+            service_topic=provider.service_topic,
+            enable_mdns=enable_mdns,
+            enable_nat=enable_nat,
+            static_key_file=peer_key
         )
-        
+
         @info "Starting PeerCompute peer node on port $(provider.p2p_port)..." bootstrap_count=length(provider.bootstrap_peers)
         PeerCompute.start_daemon(settings)
         sleep(3)
+        
         
         if !isempty(models)
             PeerCompute.announce_models(models)
