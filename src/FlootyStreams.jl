@@ -4,7 +4,6 @@ using FlootyAbstract
 using FlootyBase
 using StructTypes
 using PeerCompute
-using BareLibP2P
 
 # Ollama
 include("ollama/types.jl")
@@ -28,9 +27,10 @@ include("openai/chutes.jl")
 include("peercompute/types.jl")
 include("peercompute/interface.jl")
 
-# BareLibP2P P2P (pure Julia)
-include("barelibp2p/types.jl")
-include("barelibp2p/interface.jl")
+# BareLibP2P P2P (pure Julia) — temporarily excluded for independent development
+# using BareLibP2P
+# include("barelibp2p/types.jl")
+# include("barelibp2p/interface.jl")
 
 export create_stream
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, OllamaProvider
@@ -41,9 +41,10 @@ export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
 export PeerComputeProvider, PeerComputeMessage, PeerComputeModel, PeerComputeResponse
-export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
+# export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
-export GLOBAL_PROVIDER, GLOBAL_BARELIBP2P_PROVIDER
+export GLOBAL_PROVIDER
+# export GLOBAL_BARELIBP2P_PROVIDER
 export AbstractFlootyError, ToolError
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -57,7 +58,7 @@ function __init__()
     FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
     FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)
     FlootyBase.register_model_subtype!(:PeerComputeModel, PeerComputeModel)
-    FlootyBase.register_model_subtype!(:BareLibP2PModel, BareLibP2PModel)
+    # FlootyBase.register_model_subtype!(:BareLibP2PModel, BareLibP2PModel)
 end
 
 end # module FlootyStreams
