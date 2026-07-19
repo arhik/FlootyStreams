@@ -479,23 +479,30 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     @info "Forwarding inference to peer" peer=target_peer[1:min(20, length(target_peer))] * "..." model=model has_tools=(tools !== nothing && !isempty(tools))
     
     # ── Step 2: Build Ollama-compatible request ──
-    # Convert messages to Ollama format
-    ollama_messages = [
-        Dict("role" => FlootyAbstract.role(m), "content" => something(FlootyAbstract.content(m), ""))
-        for m in messages if FlootyAbstract.content(m) !== nothing
-    ]
-    
-    # Build request
-    request = Dict{String,Any}(
-        "model" => model,
-        "messages" => ollama_messages,
-        "stream" => stream
-    )
-    
-    # Add tools if provided
-    if tools !== nothing && !isempty(tools)
-        ollama_tools = [FlootyAbstract.build_tool(t, provider).function_ for t in tools]
-        request["tools"] = ollama_tools
+    # Convert messages to Ollama format, preserving tool_calls
+    ollama_messages = Dict{String,Any}[]
+    for m in messages
+        msg_dict = Dict{String,Any}(
+            "role" => FlootyAbstract.role(m),
+            "content" => something(FlootyAbstract.content(m), "")
+        )
+        # Include tool_calls if present (assistant messages with tool calls)
+        tcs = FlootyAbstract.tool_calls(m)
+        if tcs !== nothing && !isempty(tcs)
+            msg_dict["tool_calls"] = [
+                Dict("function" => Dict(
+                    "name" => FlootyAbstract.call_name(tc),
+                    "arguments" => FlootyAbstract.call_arguments(tc)
+                ))
+                for tc in tcs
+            ]
+        end
+        # Include tool_call_id for tool result messages
+        tcid = FlootyAbstract.tool_call_id(m)
+        if tcid !== nothing
+            msg_dict["tool_call_id"] = tcid
+        end
+        push!(ollama_messages, msg_dict)
     end
     
     # Add options if provided
