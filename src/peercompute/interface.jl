@@ -587,8 +587,8 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         error("P2P inference failed: $(result.message)")
     end
 
-    # Debug: log the raw P2P response for diagnosis
-    @info "P2P response received" status=result.status message_len=length(result.message) message_preview=result.message[1:min(200, length(result.message))]
+    # Debug: log the raw P2P response for diagnosis (use @warn since Info is disabled in FlootyCore)
+    @warn "P2P response received" status=result.status message_len=length(result.message) message_preview=result.message[1:min(300, length(result.message))]
     
     # result.message is the Ollama message JSON string directly:
     # {"role":"assistant","content":"...","tool_calls":[...]}
