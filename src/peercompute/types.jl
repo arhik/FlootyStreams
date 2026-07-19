@@ -41,6 +41,29 @@ StructTypes.StructType(::Type{PeerComputeProvider}) = StructTypes.Mutable()
 const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
 
 # ═══════════════════════════════════════════════════════════════════════
+# Tool Support (must be before Message since PeerComputeMessage references it)
+# ═══════════════════════════════════════════════════════════════════════
+
+"""Tool definition for PeerCompute (Ollama-compatible format)"""
+struct PeerComputeTool <: AbstractTool
+    type::String
+    function_::Dict{String,Any}  # Ollama uses nested function structure
+end
+
+FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
+FlootyAbstract.tool_description(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "description", "")
+FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "properties", Dict())
+
+"""Tool call from model response"""
+struct PeerComputeToolCall <: AbstractToolCall
+    function_::Dict{String,Any}
+end
+
+FlootyAbstract.call_name(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "name", "unknown")
+FlootyAbstract.call_arguments(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "arguments", Dict())
+FlootyAbstract.call_id(::PeerComputeToolCall) = nothing
+
+# ═══════════════════════════════════════════════════════════════════════
 # Messages
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -52,9 +75,9 @@ const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
     _type::String = "PeerComputeMessage"
 end
 
+StructTypes.StructType(::Type{PeerComputeMessage}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{PeerComputeMessage}) = (:content, :thinking, :tool_calls)
 StructTypes.defaults(::Type{PeerComputeMessage}) = (role = "user", _type = "PeerComputeMessage")
-
 # ═══════════════════════════════════════════════════════════════════════
 # Chat Response
 # ═══════════════════════════════════════════════════════════════════════
@@ -100,24 +123,5 @@ function Base.show(io::IO, model::PeerComputeModel)
 end
 
 # ═══════════════════════════════════════════════════════════════════════
-# Tool Support
+# Model Information
 # ═══════════════════════════════════════════════════════════════════════
-
-"""Tool definition for PeerCompute (Ollama-compatible format)"""
-struct PeerComputeTool <: AbstractTool
-    type::String
-    function_::Dict{String,Any}  # Ollama uses nested function structure
-end
-
-FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
-FlootyAbstract.tool_description(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "description", "")
-FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "properties", Dict())
-
-"""Tool call from model response"""
-struct PeerComputeToolCall <: AbstractToolCall
-    function_::Dict{String,Any}
-end
-
-FlootyAbstract.call_name(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "name", "unknown")
-FlootyAbstract.call_arguments(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "arguments", Dict())
-FlootyAbstract.call_id(::PeerComputeToolCall) = nothing
