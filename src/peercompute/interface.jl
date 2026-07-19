@@ -329,7 +329,8 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             service_topic=provider.service_topic,
             enable_mdns=enable_mdns,
             enable_nat=enable_nat,
-            static_key_file=peer_key
+            static_key_file=peer_key,
+            bootstrap_peers=provider.bootstrap_peers
         )
 
         @info "Starting PeerCompute peer node on port $(provider.p2p_port)..." bootstrap_count=length(provider.bootstrap_peers)
