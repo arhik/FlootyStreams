@@ -321,7 +321,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             end
         end
         enable_mdns = get(config, :enable_mdns, true)
-        enable_nat = get(config, :enable_nat, true)
+        enable_nat = get(config, :enable_nat, false)
 
         settings = PeerCompute.PeerComputeSettings(
             p2p_port=provider.p2p_port,
