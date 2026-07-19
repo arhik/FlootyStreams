@@ -321,7 +321,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             end
         end
         enable_mdns = get(config, :enable_mdns, true)
-        enable_nat = get(config, :enable_nat, false)
+        enable_nat = get(config, :enable_nat, true)
 
         settings = PeerCompute.PeerComputeSettings(
             p2p_port=provider.p2p_port,
@@ -344,6 +344,13 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
         
         provider.node_running = true
         @info "PeerCompute node started" peer_id=PeerCompute.get_node_id()
+        
+        # Debug: check peer discovery
+        sleep(2)
+        connected = PeerCompute.get_connected_peers()
+        @info "PeerCompute connected peers" count=length(connected) peers=connected
+        verified = PeerCompute.get_verified_peers_by_topic(provider.service_topic)
+        @info "PeerCompute verified peers for topic" topic=provider.service_topic count=length(verified) peers=verified
         return true
         
     catch e
