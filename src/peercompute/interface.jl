@@ -536,9 +536,9 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         ollama_tools = [Dict{String,Any}(
             "type" => "function",
             "function" => Dict{String,Any}(
-                "name" => FlootyAbstract.name(t),
-                "description" => FlootyAbstract.description(t),
-                "parameters" => FlootyAbstract.parameters(t)
+                "name" => FlootyAbstract.tool_name(t),
+                "description" => FlootyAbstract.tool_description(t),
+                "parameters" => FlootyAbstract.tool_parameters(t)
             )
         ) for t in tools]
         request["tools"] = ollama_tools
