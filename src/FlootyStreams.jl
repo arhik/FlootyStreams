@@ -32,6 +32,10 @@ include("peercompute/interface.jl")
 # include("barelibp2p/types.jl")
 # include("barelibp2p/interface.jl")
 
+# Fallback: always define GLOBAL_BARELIBP2P_PROVIDER so FlootyCore can reference it
+# even when barelibp2p is excluded. Points to nothing until barelibp2p is re-enabled.
+const GLOBAL_BARELIBP2P_PROVIDER = Ref{Union{Nothing, Any}}(nothing)
+
 export create_stream
 export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, OllamaProvider
 export OllamaModel
@@ -43,7 +47,7 @@ export ChutesProvider
 export PeerComputeProvider, PeerComputeMessage, PeerComputeModel, PeerComputeResponse
 # export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
-export GLOBAL_PROVIDER
+export GLOBAL_PROVIDER, GLOBAL_BARELIBP2P_PROVIDER
 # export GLOBAL_BARELIBP2P_PROVIDER
 export AbstractFlootyError, ToolError
 
