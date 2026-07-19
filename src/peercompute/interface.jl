@@ -156,6 +156,9 @@ end
 _require_wrapped(provider::PeerComputeProvider) =
     provider.wrapped === nothing && error("PeerCompute requires a wrapped provider (e.g. OllamaProvider). Set the :wrapped config key when creating the provider.")
 
+
+# Lock to serialize PeerCompute auto-start (avoids concurrent start_daemon races)
+const start_lock = ReentrantLock()
 # PeerCompute does NOT define its own message type — it always delegates
 # to the wrapped provider (typically OllamaProvider).
 # Delegate message creation to wrapped provider when available
@@ -261,122 +264,124 @@ Start the PeerCompute P2P node.
 - If neither, tries local discovery first, then starts standalone.
 """
 function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=Dict{Symbol,Any}())
-    if provider.node_running
-        # Already running — just announce models if requested
-        models = get(config, :models, String[])
-        if !isempty(models)
-            PeerCompute.announce_models(models)
-        end
-        return true
-    end
-    
-    try
-        # ── Bootstrap node (if configured) ──
-        if provider.bootstrap_node
-            bootstrap_key = get(config, :bootstrap_key, DEFAULT_BOOTSTRAP_KEY)
-            mkpath(dirname(bootstrap_key))
-            
-            if !isfile(bootstrap_key)
-                result = PeerCompute.generate_static_key(bootstrap_key)
-                result != 0 && (@error "Failed to generate bootstrap key"; return false)
-                @info "Generated bootstrap key: $bootstrap_key"
+    lock(start_lock) do
+        if provider.node_running
+            # Already running — just announce models if requested
+            models = get(config, :models, String[])
+            if !isempty(models)
+                PeerCompute.announce_models(models)
             end
-            
-            @info "Starting PeerCompute bootstrap node on port $(provider.p2p_port)..."
-            PeerCompute.start_bootstrap_node(provider.p2p_port, provider.api_port, bootstrap_key)
-            sleep(2)
-            
-            bootstrap_id = PeerCompute.get_bootstrap_node_id()
-            bootstrap_addrs = PeerCompute.get_bootstrap_multiaddresses()
-            @info "Bootstrap node started" bootstrap_id=bootstrap_id
-            
-            # Peer runs on different ports than bootstrap
-            peer_p2p_port = provider.p2p_port + 10
-            peer_api_port = provider.api_port + 10
-            
-            # Build full bootstrap addresses (add /p2p/<id> if missing)
-            full_bootstrap_addrs = String[]
-            for addr in bootstrap_addrs
-                if !contains(addr, "/p2p/")
-                    push!(full_bootstrap_addrs, "$addr/p2p/$bootstrap_id")
-                else
-                    push!(full_bootstrap_addrs, addr)
+            return true
+        end
+
+        try
+            # ── Bootstrap node (if configured) ──
+            if provider.bootstrap_node
+                bootstrap_key = get(config, :bootstrap_key, DEFAULT_BOOTSTRAP_KEY)
+                mkpath(dirname(bootstrap_key))
+
+                if !isfile(bootstrap_key)
+                    result = PeerCompute.generate_static_key(bootstrap_key)
+                    result != 0 && (@error "Failed to generate bootstrap key"; return false)
+                    @info "Generated bootstrap key: $bootstrap_key"
+                end
+
+                @info "Starting PeerCompute bootstrap node on port $(provider.p2p_port)..."
+                PeerCompute.start_bootstrap_node(provider.p2p_port, provider.api_port, bootstrap_key)
+                sleep(2)
+
+                bootstrap_id = PeerCompute.get_bootstrap_node_id()
+                bootstrap_addrs = PeerCompute.get_bootstrap_multiaddresses()
+                @info "Bootstrap node started" bootstrap_id=bootstrap_id
+
+                # Peer runs on different ports than bootstrap
+                peer_p2p_port = provider.p2p_port + 10
+                peer_api_port = provider.api_port + 10
+
+                # Build full bootstrap addresses (add /p2p/<id> if missing)
+                full_bootstrap_addrs = String[]
+                for addr in bootstrap_addrs
+                    if !contains(addr, "/p2p/")
+                        push!(full_bootstrap_addrs, "$addr/p2p/$bootstrap_id")
+                    else
+                        push!(full_bootstrap_addrs, addr)
+                    end
+                end
+
+                provider.bootstrap_peers = full_bootstrap_addrs
+                provider.p2p_port = peer_p2p_port
+                provider.api_port = peer_api_port
+
+                # Write bootstrap info for local discovery
+                write_bootstrap_info(bootstrap_id, provider.p2p_port - 10, provider.api_port - 10, full_bootstrap_addrs)
+
+                # Also set ENV so in-process providers can find it
+                ENV["PEERCOMPUTE_BOOTSTRAP_ADDR"] = join(full_bootstrap_addrs, ",")
+            else
+                # Not a bootstrap node — make sure we have bootstrap peers
+                if isempty(provider.bootstrap_peers)
+                    @info "No custom bootstrap peers configured, will use IPFS bootstrap nodes for DHT discovery"
                 end
             end
-            
-            provider.bootstrap_peers = full_bootstrap_addrs
-            provider.p2p_port = peer_p2p_port
-            provider.api_port = peer_api_port
-            
-            # Write bootstrap info for local discovery
-            write_bootstrap_info(bootstrap_id, provider.p2p_port - 10, provider.api_port - 10, full_bootstrap_addrs)
-            
-            # Also set ENV so in-process providers can find it
-            ENV["PEERCOMPUTE_BOOTSTRAP_ADDR"] = join(full_bootstrap_addrs, ",")
-        else
-            # Not a bootstrap node — make sure we have bootstrap peers
-            if isempty(provider.bootstrap_peers)
-                @info "No custom bootstrap peers configured, will use IPFS bootstrap nodes for DHT discovery"
-            end
-        end
-        
-        # ── Peer node ──
-        peer_key = get(config, :peer_key, DEFAULT_PEER_KEY)
-        mkpath(dirname(peer_key))
-        
-        if !isfile(peer_key)
-            result = PeerCompute.generate_static_key(peer_key)
-            result != 0 && (@error "Failed to generate peer key"; return false)
-            @info "Generated peer key: $peer_key"
-        end
-        
-        models = get(config, :models, String[])
-        # Auto-detect local Ollama models for bootstrap nodes (providers)
-        if isempty(models) && provider.bootstrap_node
-            try
-                models = PeerCompute.get_ollama_models()
-                @info "Auto-detected $(length(models)) local Ollama models"
-            catch
-                @warn "Could not detect Ollama models"
-            end
-        end
-        enable_mdns = get(config, :enable_mdns, true)
-        enable_nat = get(config, :enable_nat, true)
 
-        settings = PeerCompute.PeerComputeSettings(
-            p2p_port=provider.p2p_port,
-            api_port=provider.api_port,
-            service_topic=provider.service_topic,
-            enable_mdns=enable_mdns,
-            enable_nat=enable_nat,
-            static_key_file=peer_key,
-            bootstrap_peers=provider.bootstrap_peers
-        )
+            # ── Peer node ──
+            peer_key = get(config, :peer_key, DEFAULT_PEER_KEY)
+            mkpath(dirname(peer_key))
 
-        @info "Starting PeerCompute peer node on port $(provider.p2p_port)..." bootstrap_count=length(provider.bootstrap_peers)
-        PeerCompute.start_daemon(settings)
-        sleep(3)
-        
-        
-        if !isempty(models)
-            PeerCompute.announce_models(models)
-            @info "Announced $(length(models)) models"
+            if !isfile(peer_key)
+                result = PeerCompute.generate_static_key(peer_key)
+                result != 0 && (@error "Failed to generate peer key"; return false)
+                @info "Generated peer key: $peer_key"
+            end
+
+            models = get(config, :models, String[])
+            # Auto-detect local Ollama models for bootstrap nodes (providers)
+            if isempty(models) && provider.bootstrap_node
+                try
+                    models = PeerCompute.get_ollama_models()
+                    @info "Auto-detected $(length(models)) local Ollama models"
+                catch
+                    @warn "Could not detect Ollama models"
+                end
+            end
+            enable_mdns = get(config, :enable_mdns, true)
+            enable_nat = get(config, :enable_nat, true)
+
+            settings = PeerCompute.PeerComputeSettings(
+                p2p_port=provider.p2p_port,
+                api_port=provider.api_port,
+                service_topic=provider.service_topic,
+                enable_mdns=enable_mdns,
+                enable_nat=enable_nat,
+                static_key_file=peer_key,
+                bootstrap_peers=provider.bootstrap_peers
+            )
+
+            @info "Starting PeerCompute peer node on port $(provider.p2p_port)..." bootstrap_count=length(provider.bootstrap_peers)
+            PeerCompute.start_daemon(settings)
+            sleep(3)
+
+
+            if !isempty(models)
+                PeerCompute.announce_models(models)
+                @info "Announced $(length(models)) models"
+            end
+
+            provider.node_running = true
+            @info "PeerCompute node started" peer_id=PeerCompute.get_node_id()
+
+            # Debug: check peer discovery
+            sleep(2)
+            connected = PeerCompute.get_connected_peers()
+            @info "PeerCompute connected peers" count=length(connected) peers=connected
+            verified = PeerCompute.get_verified_peers_by_topic(provider.service_topic)
+            @info "PeerCompute verified peers for topic" topic=provider.service_topic count=length(verified) peers=verified
+            return true
+
+        catch e
+            @error "Failed to start PeerCompute node" exception=(e, catch_backtrace())
+            return false
         end
-        
-        provider.node_running = true
-        @info "PeerCompute node started" peer_id=PeerCompute.get_node_id()
-        
-        # Debug: check peer discovery
-        sleep(2)
-        connected = PeerCompute.get_connected_peers()
-        @info "PeerCompute connected peers" count=length(connected) peers=connected
-        verified = PeerCompute.get_verified_peers_by_topic(provider.service_topic)
-        @info "PeerCompute verified peers for topic" topic=provider.service_topic count=length(verified) peers=verified
-        return true
-        
-    catch e
-        @error "Failed to start PeerCompute node" exception=(e, catch_backtrace())
-        return false
     end
 end
 
