@@ -63,6 +63,7 @@ StructTypes.StructType(::Type{OllamaToolCallFunction}) = StructTypes.Struct()
 
 struct OllamaToolCall <: AbstractToolCall
     function_::OllamaToolCallFunction
+    id::Union{String,Nothing}
 end
 
 StructTypes.StructType(::Type{OllamaToolCall}) = StructTypes.Struct()
@@ -81,12 +82,16 @@ StructTypes.names(::Type{OllamaToolCall}) = ((:function_, :function),)
                 Dict{String,Any}("raw" => args)
             end
         end
-        new(OllamaToolCallFunction(name, args))
+        id = get(data, "id", nothing)
+        if id === nothing
+            id = get(func_data, "id", nothing)
+        end
+        new(OllamaToolCallFunction(name, args), id)
     end
 
 FlootyAbstract.call_name(call::OllamaToolCall) = call.function_.name
 FlootyAbstract.call_arguments(call::OllamaToolCall) = call.function_.arguments
-FlootyAbstract.call_id(::OllamaToolCall) = nothing
+FlootyAbstract.call_id(call::OllamaToolCall) = call.id
 
 
 struct ImageData <: AbstractProviderObject
@@ -138,11 +143,12 @@ end
     images::Union{Vector{ImageData}, Nothing} = nothing
     tool_calls::Union{Vector{OllamaToolCall}, Nothing} = nothing
     tool_name::Union{String, Nothing} = nothing
+    tool_call_id::Union{String, Nothing} = nothing
     _type::String = "OllamaMessage"
 end
 
 StructTypes.StructType(::Type{OllamaMessage}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{OllamaMessage}) = (:content, :thinking, :images, :tool_calls, :tool_name)
+StructTypes.omitempties(::Type{OllamaMessage}) = (:content, :thinking, :images, :tool_calls, :tool_name, :tool_call_id)
 StructTypes.defaults(::Type{OllamaMessage}) = (role = "user", _type = "OllamaMessage")
 
 # Request Types
