@@ -566,20 +566,31 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         error("P2P inference failed: $(result.response)")
     end
     
-    # Parse Ollama response
-    response = try
+    # Parse P2P response
+    # result.response is JSON of InferenceResponse: {"status":"success","response":"...","model":"...","timestamp":...}
+    # The "response" field contains the full Ollama message object as JSON (with content AND tool_calls)
+    p2p_response = try
         JSON.parse(result.response)
     catch
-        Dict("message" => Dict("content" => result.response))
+        Dict{String,Any}("response" => result.response)
     end
     
-    message = get(response, "message", Dict())
-    content = get(message, "content", "")
+    # Extract the message JSON string from the response field
+    message_json_str = get(p2p_response, "response", result.response)
+    
+    # Parse the message JSON to get the Ollama message object
+    message_data = try
+        JSON.parse(message_json_str)
+    catch
+        Dict{String,Any}("content" => message_json_str)
+    end
+    
+    content = get(message_data, "content", "")
     
     # Parse tool calls from Ollama response into OllamaToolCall
     tool_calls = nothing
-    if haskey(message, "tool_calls")
-        raw_calls = message["tool_calls"]
+    if haskey(message_data, "tool_calls")
+        raw_calls = message_data["tool_calls"]
         if isa(raw_calls, Vector) && !isempty(raw_calls)
             calls = OllamaToolCall[]
             for tc in raw_calls
