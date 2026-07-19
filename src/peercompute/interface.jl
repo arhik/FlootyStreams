@@ -582,23 +582,12 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         error("P2P inference failed: $(result.message)")
     end
     
-    # Parse P2P response
-    # result.message is JSON of InferenceResponse: {"status":"success","message":"...","model":"...","timestamp":...}
-    # The "message" field contains the full Ollama message object as JSON (with content AND tool_calls)
-    p2p_response = try
+    # result.message is the Ollama message JSON string directly:
+    # {"role":"assistant","content":"...","tool_calls":[...]}
+    message_data = try
         JSON.parse(result.message)
     catch
-        Dict{String,Any}("message" => result.message)
-    end
-    
-    # Extract the message JSON string from the message field
-    message_json_str = get(p2p_response, "message", result.message)
-    
-    # Parse the message JSON to get the Ollama message object
-    message_data = try
-        JSON.parse(message_json_str)
-    catch
-        Dict{String,Any}("content" => message_json_str)
+        Dict{String,Any}("content" => result.message)
     end
     
     content = get(message_data, "content", "")
