@@ -524,6 +524,26 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         push!(ollama_messages, msg_dict)
     end
     
+    # Build the request dict
+    request = Dict{String,Any}(
+        "model" => model,
+        "messages" => ollama_messages,
+        "stream" => stream
+    )
+    
+    # Add tools if provided
+    if tools !== nothing && !isempty(tools)
+        ollama_tools = [Dict{String,Any}(
+            "type" => "function",
+            "function" => Dict{String,Any}(
+                "name" => FlootyAbstract.name(t),
+                "description" => FlootyAbstract.description(t),
+                "parameters" => FlootyAbstract.parameters(t)
+            )
+        ) for t in tools]
+        request["tools"] = ollama_tools
+    end
+    
     # Add options if provided
     if options !== nothing
         request["options"] = options
@@ -539,6 +559,13 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     request_json = JSON.json(request)
     
     # Send via P2P remote peer's Ollama API
+    # Pass the actual model name, not "ollama"
+    result = PeerCompute.send_inference_request(target_peer, model, request_json)
+    
+    if result.status == "error"
+        error("P2P inference failed: $(result.response)")
+    end
+    
     # Parse Ollama response
     response = try
         JSON.parse(result.response)
