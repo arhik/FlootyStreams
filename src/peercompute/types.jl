@@ -14,22 +14,24 @@ using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMPro
 # PeerCompute Provider
 # ═══════════════════════════════════════════════════════════════════════
 
-mutable struct PeerComputeProvider <: AbstractLLMProvider
+mutable struct PeerComputeProvider{T} <: AbstractLLMProvider
     node_running::Bool
     bootstrap_peers::Vector{String}
     service_topic::String
     p2p_port::Int
     api_port::Int
     bootstrap_node::Bool  # If true, start as bootstrap node
+    wrapped::T  # The original provider (e.g., OllamaProvider) to delegate to
 
-    function PeerComputeProvider(;
+    function PeerComputeProvider{T}(;
         bootstrap_peers::Vector{String}=String[],
         service_topic::String="peercompute-nodes-v1",
         p2p_port::Int=4001,
         api_port::Int=5001,
-        bootstrap_node::Bool=false
-    )
-        new(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node)
+        bootstrap_node::Bool=false,
+        wrapped::T
+    ) where T
+        new{T}(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node, wrapped)
     end
 end
 
@@ -37,8 +39,7 @@ StructTypes.StructType(::Type{PeerComputeProvider}) = StructTypes.Mutable()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Process-level singleton: only one P2P node per process (Go limitation)
-# ═══════════════════════════════════════════════════════════════════════
-const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
+const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider{Any}, Nothing}}(nothing)
 
 # ═══════════════════════════════════════════════════════════════════════
 # Tool Support (must be before Message since PeerComputeMessage references it)

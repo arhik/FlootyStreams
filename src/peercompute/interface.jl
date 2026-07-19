@@ -154,18 +154,30 @@ end
 
 FlootyAbstract.role(msg::PeerComputeMessage) = msg.role
 FlootyAbstract.content(msg::PeerComputeMessage) = msg.content
-
-FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing) =
+# Delegate message creation to wrapped provider when available
+function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing)
+    if provider.wrapped !== nothing
+        return FlootyAbstract.create_message(provider.wrapped, role, content; tool_name=tool_name)
+    end
     PeerComputeMessage(role=role, content=content)
+end
 
-FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, images::Vector{<:AbstractProviderObject}) =
+function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, images::Vector{<:AbstractProviderObject})
+    if provider.wrapped !== nothing
+        return FlootyAbstract.create_message(provider.wrapped, role, content, images)
+    end
     error("PeerCompute does not support image attachments")
+end
 
-FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment}) =
+function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment})
+    if provider.wrapped !== nothing
+        return FlootyAbstract.create_message(provider.wrapped, role, content, attachments)
+    end
     error("PeerCompute does not support attachments")
+end
 
+# Delegate tool_calls to wrapped provider's message type
 FlootyAbstract.tool_calls(msg::PeerComputeMessage) = msg.tool_calls
-
 # ═══════════════════════════════════════════════════════════════════════
 # Image Attachments (not supported)
 # ═══════════════════════════════════════════════════════════════════════
@@ -208,6 +220,9 @@ function FlootyAbstract.create_provider_instance(::Val{:peercompute}; config::Di
         api_port = get(config, :api_port, parse(Int, get(ENV, "PEERCOMPUTE_API_PORT", string(DEFAULT_PEER_API_PORT))))
     end
     
+    # Get wrapped provider to delegate to (e.g., OllamaProvider)
+    wrapped = get(config, :wrapped, nothing)
+    
     # If a provider exists but isn't running, update its config
     if existing !== nothing
         existing.bootstrap_peers = bootstrap_peers
@@ -215,15 +230,19 @@ function FlootyAbstract.create_provider_instance(::Val{:peercompute}; config::Di
         existing.p2p_port = p2p_port
         existing.api_port = api_port
         existing.bootstrap_node = bootstrap_node
+        if wrapped !== nothing
+            existing.wrapped = wrapped
+        end
         return existing
     end
     
-    provider = PeerComputeProvider(
+    provider = PeerComputeProvider{Any}(
         bootstrap_peers=bootstrap_peers,
         service_topic=get(config, :service_topic, "peercompute-nodes-v1"),
         p2p_port=p2p_port,
         api_port=api_port,
         bootstrap_node=bootstrap_node,
+        wrapped=wrapped
     )
     GLOBAL_PROVIDER[] = provider
     return provider
@@ -520,13 +539,6 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     request_json = JSON.json(request)
     
     # Send via P2P remote peer's Ollama API
-    # Pass the actual model name, not "ollama"
-    result = PeerCompute.send_inference_request(target_peer, model, request_json)
-    
-    if result.status == "error"
-        error("P2P inference failed: $(result.response)")
-    end
-    
     # Parse Ollama response
     response = try
         JSON.parse(result.response)
@@ -537,20 +549,21 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     message = get(response, "message", Dict())
     content = get(message, "content", "")
     
-    # Parse tool calls from Ollama response
+    # Parse tool calls from Ollama response into OllamaToolCall
     tool_calls = nothing
     if haskey(message, "tool_calls")
         raw_calls = message["tool_calls"]
         if isa(raw_calls, Vector) && !isempty(raw_calls)
-            calls = PeerComputeToolCall[]
+            calls = OllamaToolCall[]
             for tc in raw_calls
-                push!(calls, PeerComputeToolCall(tc))
+                push!(calls, OllamaToolCall(tc))
             end
             tool_calls = calls
         end
     end
     
-    msg = PeerComputeMessage(role="assistant", content=content, tool_calls=tool_calls)
+    # Return OllamaMessage (delegate to Ollama provider's message type)
+    msg = OllamaMessage(role="assistant", content=content, tool_calls=tool_calls)
     return PeerComputeResponse(msg, model, target_peer, 0, result.status == "success")
 end
 
