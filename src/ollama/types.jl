@@ -67,6 +67,22 @@ end
 
 StructTypes.StructType(::Type{OllamaToolCall}) = StructTypes.Struct()
 StructTypes.names(::Type{OllamaToolCall}) = ((:function_, :function),)
+    
+    # Constructor from Dict (e.g., from JSON.parse in PeerCompute)
+    function OllamaToolCall(data::Dict)
+        func_data = get(data, "function", data)
+        name = get(func_data, "name", "unknown")
+        args = get(func_data, "arguments", Dict{String,Any}())
+        # Ollama returns arguments as a JSON string, parse it
+        if args isa String
+            args = try
+                JSON.parse(args)
+            catch
+                Dict{String,Any}("raw" => args)
+            end
+        end
+        new(OllamaToolCallFunction(name, args))
+    end
 
 FlootyAbstract.call_name(call::OllamaToolCall) = call.function_.name
 FlootyAbstract.call_arguments(call::OllamaToolCall) = call.function_.arguments
