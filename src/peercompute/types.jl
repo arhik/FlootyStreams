@@ -84,7 +84,7 @@ StructTypes.defaults(::Type{PeerComputeMessage}) = (role = "user", _type = "Peer
 # ═══════════════════════════════════════════════════════════════════════
 
 struct PeerComputeResponse <: AbstractChatResponse
-    message::PeerComputeMessage
+    message::AbstractMessage
     model::Union{String, Nothing}
     peer_id::Union{String, Nothing}
     latency_ms::Int
