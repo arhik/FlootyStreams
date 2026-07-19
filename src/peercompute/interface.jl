@@ -418,7 +418,12 @@ function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{S
     models = PeerComputeModel[]
     
     # Get verified peers (the reliable discovery mechanism)
-    verified = try PeerCompute.get_verified_peers_by_topic("peercompute-nodes-v1"); catch; String[]; end
+    topic = if GLOBAL_PROVIDER[] !== nothing
+        GLOBAL_PROVIDER[].service_topic
+    else
+        get(config, :service_topic, "peercompute-nodes-v1")
+    end
+    verified = try PeerCompute.get_verified_peers_by_topic(topic); catch; String[]; end
     our_id = try PeerCompute.get_node_id(); catch; ""; end
     
     for peer_id in verified
