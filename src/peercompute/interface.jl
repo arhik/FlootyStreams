@@ -164,7 +164,7 @@ FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, conte
 FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment}) =
     error("PeerCompute does not support attachments")
 
-FlootyAbstract.tool_calls(msg::PeerComputeMessage) = nothing
+FlootyAbstract.tool_calls(msg::PeerComputeMessage) = msg.tool_calls
 
 # ═══════════════════════════════════════════════════════════════════════
 # Image Attachments (not supported)
@@ -529,7 +529,20 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     message = get(response, "message", Dict())
     content = get(message, "content", "")
     
-    msg = PeerComputeMessage(role="assistant", content=content)
+    # Parse tool calls from Ollama response
+    tool_calls = nothing
+    if haskey(message, "tool_calls")
+        raw_calls = message["tool_calls"]
+        if isa(raw_calls, Vector) && !isempty(raw_calls)
+            calls = PeerComputeToolCall[]
+            for tc in raw_calls
+                push!(calls, PeerComputeToolCall(tc))
+            end
+            tool_calls = calls
+        end
+    end
+    
+    msg = PeerComputeMessage(role="assistant", content=content, tool_calls=tool_calls)
     return PeerComputeResponse(msg, model, target_peer, 0, result.status == "success")
 end
 

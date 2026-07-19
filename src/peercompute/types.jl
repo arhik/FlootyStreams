@@ -48,11 +48,11 @@ const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
     role::String = "user"
     content::Union{String, Nothing} = nothing
     thinking::Union{String, Nothing} = nothing
+    tool_calls::Union{Vector{PeerComputeToolCall}, Nothing} = nothing
     _type::String = "PeerComputeMessage"
 end
 
-StructTypes.StructType(::Type{PeerComputeMessage}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{PeerComputeMessage}) = (:content, :thinking)
+StructTypes.omitempties(::Type{PeerComputeMessage}) = (:content, :thinking, :tool_calls)
 StructTypes.defaults(::Type{PeerComputeMessage}) = (role = "user", _type = "PeerComputeMessage")
 
 # ═══════════════════════════════════════════════════════════════════════
