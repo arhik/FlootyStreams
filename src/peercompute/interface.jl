@@ -152,43 +152,44 @@ end
 # Message Interface
 # ═══════════════════════════════════════════════════════════════════════
 
-FlootyAbstract.role(msg::PeerComputeMessage) = msg.role
-FlootyAbstract.content(msg::PeerComputeMessage) = msg.content
+# Guard: PeerCompute requires a wrapped provider for all message/tool operations.
+_require_wrapped(provider::PeerComputeProvider) =
+    provider.wrapped === nothing && error("PeerCompute requires a wrapped provider (e.g. OllamaProvider). Set the :wrapped config key when creating the provider.")
+
+# PeerCompute does NOT define its own message type — it always delegates
+# to the wrapped provider (typically OllamaProvider).
 # Delegate message creation to wrapped provider when available
 function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String; tool_name::Union{String,Nothing}=nothing)
-    if provider.wrapped !== nothing
-        return FlootyAbstract.create_message(provider.wrapped, role, content; tool_name=tool_name)
-    end
-    PeerComputeMessage(role=role, content=content)
+    _require_wrapped(provider)
+    return FlootyAbstract.create_message(provider.wrapped, role, content; tool_name=tool_name)
 end
 
 function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, images::Vector{<:AbstractProviderObject})
-    if provider.wrapped !== nothing
-        return FlootyAbstract.create_message(provider.wrapped, role, content, images)
-    end
-    error("PeerCompute does not support image attachments")
+    _require_wrapped(provider)
+    return FlootyAbstract.create_message(provider.wrapped, role, content, images)
 end
 
 function FlootyAbstract.create_message(provider::PeerComputeProvider, role::String, content::String, attachments::Vector{<:AbstractAttachment})
-    if provider.wrapped !== nothing
-        return FlootyAbstract.create_message(provider.wrapped, role, content, attachments)
-    end
-    error("PeerCompute does not support attachments")
+    _require_wrapped(provider)
+    return FlootyAbstract.create_message(provider.wrapped, role, content, attachments)
 end
 
-# Delegate tool_calls to wrapped provider's message type
-FlootyAbstract.tool_calls(msg::PeerComputeMessage) = msg.tool_calls
+# No PeerCompute-specific message interface methods — the wrapped provider's
+# message type (e.g. OllamaMessage) is used directly throughout.
+
 # ═══════════════════════════════════════════════════════════════════════
-# Image Attachments (not supported)
+# Image Attachments (delegated to wrapped provider)
 # ═══════════════════════════════════════════════════════════════════════
 
-FlootyAbstract.create_attachments(provider::PeerComputeProvider, paths::Vector{String}, mime_types::Vector{String}) =
-    error("PeerCompute does not support attachments")
+function FlootyAbstract.create_attachments(provider::PeerComputeProvider, paths::Vector{String}, mime_types::Vector{String})
+    _require_wrapped(provider)
+    return FlootyAbstract.create_attachments(provider.wrapped, paths, mime_types)
+end
 
-FlootyAbstract.create_image_data(provider::PeerComputeProvider, path::String) =
-    error("PeerCompute does not support image attachments")
-
-FlootyAbstract.images(msg::PeerComputeMessage) = nothing
+function FlootyAbstract.create_image_data(provider::PeerComputeProvider, path::String)
+    _require_wrapped(provider)
+    return FlootyAbstract.create_image_data(provider.wrapped, path)
+end
 
 # ═══════════════════════════════════════════════════════════════════════
 # Provider Instance & Lifecycle
@@ -497,8 +498,14 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     
     @info "Forwarding inference to peer" peer=target_peer[1:min(20, length(target_peer))] * "..." model=model has_tools=(tools !== nothing && !isempty(tools))
     
-    # ── Step 2: Build Ollama-compatible request ──
-    # Convert messages to Ollama format, preserving tool_calls
+    # ── Step 2: Build request via wrapped provider ──
+    # Delegate message serialization to the wrapped provider (e.g. Ollama).
+    # We serialize messages to Dicts using the wrapped provider's message type,
+    # so tool_calls and tool_call_id are preserved in Ollama wire format.
+    _require_wrapped(provider)
+    wrapped = provider.wrapped
+
+    # Convert messages to wire-format Dicts using the wrapped provider's types
     ollama_messages = Dict{String,Any}[]
     for m in messages
         msg_dict = Dict{String,Any}(
@@ -523,24 +530,28 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         end
         push!(ollama_messages, msg_dict)
     end
-    
+
     # Build the request dict
     request = Dict{String,Any}(
         "model" => model,
         "messages" => ollama_messages,
         "stream" => stream
     )
-    
-    # Add tools if provided
+
+    # Add tools if provided — delegate tool building to the wrapped provider
     if tools !== nothing && !isempty(tools)
-        ollama_tools = [Dict{String,Any}(
-            "type" => "function",
-            "function" => Dict{String,Any}(
-                "name" => FlootyAbstract.tool_name(t),
-                "description" => FlootyAbstract.tool_description(t),
-                "parameters" => FlootyAbstract.tool_parameters(t)
+        ollama_tools = map(tools) do t
+            built = FlootyAbstract.build_tool(t, wrapped)
+            # Serialize to Dict{String,Any} for wire transport
+            Dict{String,Any}(
+                "type" => "function",
+                "function" => Dict{String,Any}(
+                    "name" => FlootyAbstract.tool_name(built),
+                    "description" => FlootyAbstract.tool_description(built),
+                    "parameters" => FlootyAbstract.tool_parameters(built)
+                )
             )
-        ) for t in tools]
+        end
         request["tools"] = ollama_tools
     end
     
@@ -639,55 +650,33 @@ end
 # ═══════════════════════════════════════════════════════════════════════
 
 """
-    FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider) -> PeerComputeTool
+    FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider)
 
-Convert an AbstractTool to Ollama-compatible PeerComputeTool format.
+Delegate to the wrapped provider's build_tool, then extract its JSON schema
+into the Dict{String,Any} form that PeerCompute forwards over the wire.
 """
 function FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider)
-    # Convert parameters to Ollama format
-    params = FlootyAbstract.tool_parameters(tool)
-    
-    # Build parameters schema
-    properties = Dict{String,Any}()
-    required = String[]
-    
-    if params isa Dict && haskey(params, "properties")
-        # Already in schema format
-        for (k, v) in params["properties"]
-            properties[k] = v
-        end
-        if haskey(params, "required")
-            required = params["required"]
-        end
-    elseif params isa Vector
-        # Convert from simple vector
-        for p in params
-            if p isa String
-                properties[p] = Dict("type" => "string", "description" => "")
-            elseif p isa Dict
-                name = get(p, "name", "param")
-                properties[name] = Dict(
-                    "type" => get(p, "type", "string"),
-                    "description" => get(p, "description", "")
-                )
-                if get(p, "required", false)
-                    push!(required, name)
-                end
-            end
-        end
+    _require_wrapped(provider)
+    # Delegate to wrapped provider (e.g. Ollama) to build a typed tool,
+    # then convert to a plain Dict for P2P wire transport.
+    wrapped_tool = FlootyAbstract.build_tool(tool, provider.wrapped)
+    # If the wrapped provider returned a PeerComputeTool (Dict-based), pass through.
+    # If it returned a typed tool (e.g. OllamaTool), serialize its function body to Dict.
+    if wrapped_tool isa PeerComputeTool
+        return wrapped_tool
     end
-    
-    function_def = Dict(
-        "name" => FlootyAbstract.tool_name(tool),
-        "description" => FlootyAbstract.tool_description(tool),
-        "parameters" => Dict(
-            "type" => "object",
-            "properties" => properties,
-            "required" => required
+    # Serialize the typed tool's function_ to a Dict via StructTypes round-trip.
+    function_dict = try
+        StructTypes.lower(StructTypes.StructType(typeof(wrapped_tool)), wrapped_tool)
+    catch
+        # Fallback: construct from the abstract interface directly.
+        Dict{String,Any}(
+            "name" => FlootyAbstract.tool_name(tool),
+            "description" => FlootyAbstract.tool_description(tool),
+            "parameters" => FlootyAbstract.tool_parameters(tool),
         )
-    )
-    
-    return PeerComputeTool("function", function_def)
+    end
+    return PeerComputeTool("function", function_dict)
 end
 
 # ═══════════════════════════════════════════════════════════════════════

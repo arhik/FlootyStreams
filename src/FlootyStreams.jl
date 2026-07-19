@@ -44,7 +44,7 @@ export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
 export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
-export PeerComputeProvider, PeerComputeMessage, PeerComputeModel, PeerComputeResponse
+export PeerComputeProvider, PeerComputeModel, PeerComputeResponse
 # export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
 export GLOBAL_PROVIDER, GLOBAL_BARELIBP2P_PROVIDER
@@ -57,7 +57,6 @@ export AbstractFlootyError, ToolError
 function __init__()
     FlootyBase.register_message_subtype!(:OllamaMessage, OllamaMessage)
     FlootyBase.register_message_subtype!(:OpenAIMessage, OpenAIMessage)
-    FlootyBase.register_message_subtype!(:PeerComputeMessage, PeerComputeMessage)
     # BareLibP2P uses OllamaMessage directly, no separate registration needed
     FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
     FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)

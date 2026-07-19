@@ -1,36 +1,51 @@
 """
-    peercompute/types.jl
+PeerCompute type definitions.
 
-Provider types for PeerCompute P2P integration.
+PeerCompute is a pure P2P forwarding wrapper that delegates to a wrapped
+provider (typically OllamaProvider). It does NOT define its own message or
+tool-call types — it always returns the wrapped provider's concrete types
+(e.g. OllamaMessage, OllamaToolCall).
 """
 
 import StructTypes
-import PeerCompute
 using Dates
-
 using FlootyAbstract: AbstractProviderObject, AbstractAttachment, AbstractLLMProvider, AbstractMessage, AbstractTool, AbstractModel, AbstractChatResponse
 
 # ═══════════════════════════════════════════════════════════════════════
 # PeerCompute Provider
 # ═══════════════════════════════════════════════════════════════════════
 
+"""
+    PeerComputeProvider{T} <: AbstractLLMProvider
+
+A P2P forwarding provider. `wrapped::T` holds the original provider
+(typically `OllamaProvider`) to which message creation, tool building, and
+response parsing are delegated. PeerCompute only owns the P2P transport:
+discovering peers, serializing the wrapped provider's request to JSON,
+forwarding via libp2p, and deserializing the response back into the wrapped
+provider's native types.
+"""
 mutable struct PeerComputeProvider{T} <: AbstractLLMProvider
     node_running::Bool
     bootstrap_peers::Vector{String}
     service_topic::String
     p2p_port::Int
     api_port::Int
-    bootstrap_node::Bool  # If true, start as bootstrap node
-    wrapped::T  # The original provider (e.g., OllamaProvider) to delegate to
+    bootstrap_node::Bool
+    wrapped::T
 
-    function PeerComputeProvider{T}(;
-        bootstrap_peers::Vector{String}=String[],
-        service_topic::String="peercompute-nodes-v1",
-        p2p_port::Int=4001,
-        api_port::Int=5001,
-        bootstrap_node::Bool=false,
-        wrapped::T
-    ) where T
+    function PeerComputeProvider{T}(;bootstrap_peers::Vector{String}=String[],
+                                     service_topic::String="peercompute-nodes-v1",
+                                     p2p_port::Int=9002, api_port::Int=9003,
+                                     bootstrap_node::Bool=false, wrapped=nothing) where {T}
+        new(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node, wrapped)
+    end
+
+    function PeerComputeProvider(;bootstrap_peers::Vector{String}=String[],
+                                  service_topic::String="peercompute-nodes-v1",
+                                  p2p_port::Int=9002, api_port::Int=9003,
+                                  bootstrap_node::Bool=false, wrapped=nothing)
+        T = typeof(wrapped)
         new{T}(false, bootstrap_peers, service_topic, p2p_port, api_port, bootstrap_node, wrapped)
     end
 end
@@ -39,50 +54,37 @@ StructTypes.StructType(::Type{PeerComputeProvider}) = StructTypes.Mutable()
 
 # ═══════════════════════════════════════════════════════════════════════
 # Process-level singleton: only one P2P node per process (Go limitation)
-const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider{Any}, Nothing}}(nothing)
-
-# ═══════════════════════════════════════════════════════════════════════
-# Tool Support (must be before Message since PeerComputeMessage references it)
 # ═══════════════════════════════════════════════════════════════════════
 
-"""Tool definition for PeerCompute (Ollama-compatible format)"""
+const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
+
+# ═══════════════════════════════════════════════════════════════════════
+# Tool Support
+# ═══════════════════════════════════════════════════════════════════════
+
+"""
+Tool definition for PeerCompute (Ollama-compatible JSON schema format).
+PeerCompute forwards tools as-is to the remote peer; the wrapped provider
+(typically Ollama) is responsible for building the typed tool structure.
+"""
 struct PeerComputeTool <: AbstractTool
     type::String
-    function_::Dict{String,Any}  # Ollama uses nested function structure
-end
-
-FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
-FlootyAbstract.tool_description(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "description", "")
-FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(get(tool.function_, "parameters", Dict()), "properties", Dict())
-
-"""Tool call from model response"""
-struct PeerComputeToolCall <: AbstractToolCall
     function_::Dict{String,Any}
 end
 
-FlootyAbstract.call_name(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "name", "unknown")
-FlootyAbstract.call_arguments(call::PeerComputeToolCall) = get(get(call, :function_, Dict()), "arguments", Dict())
-FlootyAbstract.call_id(::PeerComputeToolCall) = nothing
+FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
+FlootyAbstract.tool_description(tool::PeerComputeTool) = get(tool.function_, "description", "")
+FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(tool.function_, "parameters", Dict())
 
-# ═══════════════════════════════════════════════════════════════════════
-# Messages
-# ═══════════════════════════════════════════════════════════════════════
-
-@kwdef struct PeerComputeMessage <: AbstractMessage
-    role::String = "user"
-    content::Union{String, Nothing} = nothing
-    thinking::Union{String, Nothing} = nothing
-    tool_calls::Union{Vector{PeerComputeToolCall}, Nothing} = nothing
-    _type::String = "PeerComputeMessage"
-end
-
-StructTypes.StructType(::Type{PeerComputeMessage}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{PeerComputeMessage}) = (:content, :thinking, :tool_calls)
-StructTypes.defaults(::Type{PeerComputeMessage}) = (role = "user", _type = "PeerComputeMessage")
 # ═══════════════════════════════════════════════════════════════════════
 # Chat Response
 # ═══════════════════════════════════════════════════════════════════════
 
+"""
+Response from a PeerCompute inference call. `message` holds the wrapped
+provider's native message type (e.g. OllamaMessage) — PeerCompute does NOT
+define its own message type.
+"""
 struct PeerComputeResponse <: AbstractChatResponse
     message::AbstractMessage
     model::Union{String, Nothing}
@@ -95,11 +97,6 @@ StructTypes.StructType(::Type{PeerComputeResponse}) = StructTypes.Struct()
 StructTypes.omitempties(::Type{PeerComputeResponse}) = (:model, :peer_id)
 
 FlootyAbstract.response_message(response::PeerComputeResponse) = response.message
-
-# ═══════════════════════════════════════════════════════════════════════
-# P2P Inference Response (from Go layer) — imported from PeerCompute
-# PeerCompute.P2PInferenceResponse is used for parsing Go responses
-# ═══════════════════════════════════════════════════════════════════════
 
 # ═══════════════════════════════════════════════════════════════════════
 # Model Information
@@ -119,10 +116,9 @@ FlootyAbstract.model_name(model::PeerComputeModel) = model.name
 FlootyAbstract.model_provider(model::PeerComputeModel) = :peercompute
 
 function Base.show(io::IO, model::PeerComputeModel)
-    print(io, "PeerComputeModel(", model.name, ")")
-    !isnothing(model.peer_id) && print(io, " peer=", model.peer_id[1:min(12, length(model.peer_id))], "...")
+    print(io, "PeerComputeModel(\"$(model.name)\"")
+    if model.peer_id !== nothing
+        print(io, ", peer=$(model.peer_id[1:min(12, length(model.peer_id))])…")
+    end
+    print(io, ")")
 end
-
-# ═══════════════════════════════════════════════════════════════════════
-# Model Information
-# ═══════════════════════════════════════════════════════════════════════
