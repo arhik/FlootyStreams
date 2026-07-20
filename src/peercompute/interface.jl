@@ -361,6 +361,9 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             PeerCompute.start_daemon(settings)
             sleep(3)
 
+            # Start Julia HTTP inference endpoint (handles Ollama /api/chat calls)
+            start_inference_server(provider.api_port)
+
 
             if !isempty(models)
                 PeerCompute.announce_models(models)
@@ -395,14 +398,17 @@ function stop_provider(provider::PeerComputeProvider)
         @warn "PeerCompute node is not running"
         return
     end
-    
+
+    # Stop inference HTTP server first
+    stop_inference_server()
+
     try; PeerCompute.stop_daemon(); catch e; @warn "Error stopping peer node" exception=e; end
     if provider.bootstrap_node
         try; PeerCompute.stop_bootstrap_node(); catch e; @warn "Error stopping bootstrap" exception=e; end
         # Clean up local bootstrap info
         try; isfile(BOOTSTRAP_INFO_FILE) && rm(BOOTSTRAP_INFO_FILE); catch; end
     end
-    
+
     provider.node_running = false
     GLOBAL_PROVIDER[] = nothing
     @info "PeerCompute node stopped"
@@ -643,3 +649,94 @@ end
 
 FlootyAbstract.create_embedder(provider::PeerComputeProvider, model::String; kwargs...) =
     error("PeerCompute does not support embeddings")
+
+# ═══════════════════════════════════════════════════════════════════════
+# HTTP Inference Endpoint — called by Go inferenceStreamHandler
+# ═══════════════════════════════════════════════════════════════════════
+
+const _inference_server = Ref{Any}(nothing)
+
+function start_inference_server(port::Int)
+    if _inference_server[] !== nothing
+        return  # already running
+    end
+
+    # Check if port is available first
+    try
+        test_sock = Sockets.listen(Sockets.IPv4(127,0,0,1), port)
+        close(test_sock)
+    catch e
+        if e isa Base.IOError && occursin("EADDRINUSE", string(e))
+            @warn "Inference port $port in use, skipping (another instance is handling it)"
+            return
+        end
+    end
+
+    # Use listen! (non-blocking) so we can store the server and close it later
+    server = HTTP.listen!("127.0.0.1", port; reuseaddr=true) do http::HTTP.Stream
+        req = http.message
+        if req.method == "POST" && req.target == "/inference"
+            _handle_inference_request(http)
+        else
+            HTTP.setstatus(http, 404)
+            HTTP.startwrite(http)
+            write(http, "Not found")
+        end
+    end
+
+    _inference_server[] = server
+    @info "Inference HTTP server started on port $port"
+    sleep(0.5)  # give it a moment to start
+end
+
+
+function _handle_inference_request(http::HTTP.Stream)
+    try
+        body = String(read(http))
+        req = JSON.parse(body)
+
+        model = get(req, "model", "")
+        prompt = get(req, "prompt", "")
+
+        # Parse the prompt as a ChatRequest
+        chat_request = try
+            JSON3.read(prompt, ChatRequest)
+        catch
+            # Plain text prompt — wrap in ChatRequest
+            ChatRequest(
+                model=model,
+                messages=[OllamaMessage(role="user", content=prompt)]
+            )
+        end
+
+        # Delegate to Ollama provider for the actual API call
+        ollama = OllamaProvider()
+        chat_response = chat(ollama, chat_request.messages, chat_request.model,
+            false, chat_request.format, chat_request.options, chat_request.tools)
+
+        # Return the full ChatResponse as JSON
+        HTTP.setstatus(http, 200)
+        HTTP.setheader(http, "Content-Type" => "application/json")
+        HTTP.startwrite(http)
+        write(http, JSON3.write(chat_response))
+
+    catch e
+        @error "Inference request failed" error=e
+        HTTP.setstatus(http, 500)
+        HTTP.startwrite(http)
+        write(http, JSON3.write(Dict("status" => "error", "message" => string(e))))
+    end
+end
+
+function stop_inference_server()
+    server = _inference_server[]
+    if server !== nothing
+        try
+            close(server)
+        catch e
+            @warn "Error closing inference server" error=e
+        end
+        _inference_server[] = nothing
+        @info "Inference HTTP server stopped"
+    end
+end

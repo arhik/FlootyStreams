@@ -59,24 +59,6 @@ StructTypes.StructType(::Type{PeerComputeProvider}) = StructTypes.Mutable()
 const GLOBAL_PROVIDER = Ref{Union{PeerComputeProvider, Nothing}}(nothing)
 
 # ═══════════════════════════════════════════════════════════════════════
-# Tool Support
-# ═══════════════════════════════════════════════════════════════════════
-
-"""
-Tool definition for PeerCompute (Ollama-compatible JSON schema format).
-PeerCompute forwards tools as-is to the remote peer; the wrapped provider
-(typically Ollama) is responsible for building the typed tool structure.
-"""
-struct PeerComputeTool <: AbstractTool
-    type::String
-    function_::Dict{String,Any}
-end
-
-FlootyAbstract.tool_name(tool::PeerComputeTool) = get(tool.function_, "name", "unknown")
-FlootyAbstract.tool_description(tool::PeerComputeTool) = get(tool.function_, "description", "")
-FlootyAbstract.tool_parameters(tool::PeerComputeTool) = get(tool.function_, "parameters", Dict())
-
-# ═══════════════════════════════════════════════════════════════════════
 # Chat Response
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -89,8 +71,6 @@ struct PeerComputeResponse <: AbstractChatResponse
     message::AbstractMessage
     model::Union{String, Nothing}
     peer_id::Union{String, Nothing}
-    latency_ms::Int
-    success::Bool
 end
 
 StructTypes.StructType(::Type{PeerComputeResponse}) = StructTypes.Struct()
@@ -105,8 +85,6 @@ FlootyAbstract.response_message(response::PeerComputeResponse) = response.messag
 @kwdef struct PeerComputeModel <: AbstractModel
     name::String
     peer_id::Union{String, Nothing} = nothing
-    reputation::Float64 = 1.0
-    latency_ms::Int = 0
 end
 
 StructTypes.StructType(::Type{PeerComputeModel}) = StructTypes.Struct()
