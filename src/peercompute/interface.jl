@@ -577,7 +577,7 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     end
 
     msg = response_message(chat_response)
-    return PeerComputeResponse(msg, model, target_peer, 0, true)
+    return PeerComputeResponse(msg, model, target_peer)
 end
 
 function FlootyAbstract.chat_stream(provider::PeerComputeProvider, model::String, messages::Vector{<:AbstractMessage},
@@ -621,26 +621,10 @@ into the Dict{String,Any} form that PeerCompute forwards over the wire.
 """
 function FlootyAbstract.build_tool(tool::AbstractTool, provider::PeerComputeProvider)
     _require_wrapped(provider)
-    # Delegate to wrapped provider (e.g. Ollama) to build a typed tool,
-    # then convert to a plain Dict for P2P wire transport.
-    wrapped_tool = FlootyAbstract.build_tool(tool, provider.wrapped)
-    # If the wrapped provider returned a PeerComputeTool (Dict-based), pass through.
-    # If it returned a typed tool (e.g. OllamaTool), serialize its function body to Dict.
-    if wrapped_tool isa PeerComputeTool
-        return wrapped_tool
-    end
-    # Serialize the typed tool's function_ to a Dict via StructTypes round-trip.
-    function_dict = try
-        StructTypes.lower(StructTypes.StructType(typeof(wrapped_tool)), wrapped_tool)
-    catch
-        # Fallback: construct from the abstract interface directly.
-        Dict{String,Any}(
-            "name" => FlootyAbstract.tool_name(tool),
-            "description" => FlootyAbstract.tool_description(tool),
-            "parameters" => FlootyAbstract.tool_parameters(tool),
-        )
-    end
-    return PeerComputeTool("function", function_dict)
+    # Delegate directly to the wrapped provider (e.g. Ollama).
+    # The wrapped provider returns its native tool type (e.g. OllamaTool),
+    # which is serialized via JSON3.write(ChatRequest) for P2P transport.
+    return FlootyAbstract.build_tool(tool, provider.wrapped)
 end
 
 # ═══════════════════════════════════════════════════════════════════════
