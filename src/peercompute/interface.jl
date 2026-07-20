@@ -678,31 +678,32 @@ function _handle_inference_request(http::HTTP.Stream)
     try
         body = String(read(http))
 
-        # Parse the body directly as ChatRequest (no nested InferenceRequest wrapper)
-        chat_request = try
-            JSON3.read(body, ChatRequest)
-        catch
-            # Fallback: plain text prompt — wrap in ChatRequest
-            ChatRequest(
-                model="",
-                messages=[OllamaMessage(role="user", content=body)]
-            )
-        end
-
-        # Delegate to the wrapped provider (from GLOBAL_PROVIDER)
+        # Proxy the raw ChatRequest JSON directly to Ollama's /api/chat endpoint.
+        # This is a pass-through — no type conversion needed. The wrapped provider's
+        # chat() function would do the same: JSON3.write(ChatRequest) → HTTP POST.
+        # We skip the struct round-trip entirely.
         provider = GLOBAL_PROVIDER[]
-        wrapped = provider !== nothing ? provider.wrapped : nothing
-        if wrapped === nothing
-            wrapped = OllamaProvider()
+        base_url = if provider !== nothing && provider.wrapped !== nothing
+            getfield(provider.wrapped, :baseURL)
+        else
+            "http://localhost:11434"
         end
-        chat_response = chat(wrapped, chat_request.messages, chat_request.model,
-            false, chat_request.format, chat_request.options, chat_request.tools)
+        ollama_url = string(base_url, "/api/chat")
 
-        # Return the full ChatResponse as JSON
+        response = HTTP.post(ollama_url, ["Content-Type" => "application/json"], body; timeout=120)
+
+        if response.status != 200
+            HTTP.setstatus(http, 500)
+            HTTP.startwrite(http)
+            write(http, JSON3.write(Dict("status" => "error", "message" => "Ollama returned $(response.status): $(String(response.body))")))
+            return
+        end
+
+        # Return the raw ChatResponse JSON from Ollama
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "application/json")
         HTTP.startwrite(http)
-        write(http, JSON3.write(chat_response))
+        write(http, response.body)
 
     catch e
         @error "Inference request failed" error=e
