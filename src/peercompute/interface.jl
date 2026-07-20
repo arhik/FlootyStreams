@@ -532,6 +532,18 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         error("No remote peers available for topic '$(provider.service_topic)'. " *
               "Ensure a FlootyCore node with Ollama is running and connected to the network.")
     end
+
+    # If targeting ourselves, skip P2P and call wrapped provider directly
+    if target_peer == our_id
+        @info "Local inference (self-target), calling wrapped provider directly"
+        _require_wrapped(provider)
+        wrapped = provider.wrapped
+        ollama_messages = [m isa OllamaMessage ? m : OllamaMessage(role=role(m), content=content(m)) for m in messages]
+        ollama_tools = tools === nothing ? nothing : map(t -> FlootyAbstract.build_tool(t, wrapped), tools)
+        chat_response = chat(wrapped, ollama_messages, model, stream, format, options, ollama_tools)
+        msg = response_message(chat_response)
+        return PeerComputeResponse(msg, model, target_peer)
+    end
     
     @info "Forwarding inference to peer" peer=target_peer[1:min(20, length(target_peer))] * "..." model=model has_tools=(tools !== nothing && !isempty(tools))
     
