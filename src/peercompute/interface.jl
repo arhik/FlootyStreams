@@ -677,19 +677,15 @@ end
 function _handle_inference_request(http::HTTP.Stream)
     try
         body = String(read(http))
-        req = JSON.parse(body)
 
-        model = get(req, "model", "")
-        prompt = get(req, "prompt", "")
-
-        # Parse the prompt as a ChatRequest
+        # Parse the body directly as ChatRequest (no nested InferenceRequest wrapper)
         chat_request = try
-            JSON3.read(prompt, ChatRequest)
+            JSON3.read(body, ChatRequest)
         catch
-            # Plain text prompt — wrap in ChatRequest
+            # Fallback: plain text prompt — wrap in ChatRequest
             ChatRequest(
-                model=model,
-                messages=[OllamaMessage(role="user", content=prompt)]
+                model="",
+                messages=[OllamaMessage(role="user", content=body)]
             )
         end
 
@@ -713,18 +709,5 @@ function _handle_inference_request(http::HTTP.Stream)
         HTTP.setstatus(http, 500)
         HTTP.startwrite(http)
         write(http, JSON3.write(Dict("status" => "error", "message" => string(e))))
-    end
-end
-
-function stop_inference_server()
-    server = _inference_server[]
-    if server !== nothing
-        try
-            close(server)
-        catch e
-            @warn "Error closing inference server" error=e
-        end
-        _inference_server[] = nothing
-        @info "Inference HTTP server stopped"
     end
 end
