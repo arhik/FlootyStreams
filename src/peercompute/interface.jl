@@ -709,9 +709,13 @@ function _handle_inference_request(http::HTTP.Stream)
             )
         end
 
-        # Delegate to Ollama provider for the actual API call
-        ollama = OllamaProvider()
-        chat_response = chat(ollama, chat_request.messages, chat_request.model,
+        # Delegate to the wrapped provider (from GLOBAL_PROVIDER)
+        provider = GLOBAL_PROVIDER[]
+        wrapped = provider !== nothing ? provider.wrapped : nothing
+        if wrapped === nothing
+            wrapped = OllamaProvider()
+        end
+        chat_response = chat(wrapped, chat_request.messages, chat_request.model,
             false, chat_request.format, chat_request.options, chat_request.tools)
 
         # Return the full ChatResponse as JSON
