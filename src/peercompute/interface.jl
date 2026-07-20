@@ -590,29 +590,67 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     # Debug: log the raw P2P response for diagnosis (use @warn since Info is disabled in FlootyCore)
     @warn "P2P response received" status=result.status message_len=length(result.message) message_preview=result.message[1:min(300, length(result.message))]
     
-    # result.message is the Ollama message JSON string directly:
-    # {"role":"assistant","content":"...","tool_calls":[...]}
+    # result.message is either:
+    # 1. Ollama message JSON: {"role":"assistant","content":"...","tool_calls":[...]}
+    # 2. Plain text with XML function calls (old format): "text\n<function><name>...</name><parameters>...</parameters></function>"
     message_data = try
         JSON.parse(result.message)
     catch
-        Dict{String,Any}("content" => result.message)
+        # Old format: parse XML function calls from plain text
+        text = result.message
+        # Extract function calls
+        func_pattern = r"<function>\s*<name>(.*?)</name>\s*<parameters>(.*?)</parameters>\s*</function>"
+        func_matches = eachmatch(func_pattern, text)
+        func_calls = [m for m in func_matches]
+        
+        # Extract text content (everything before first function call)
+        content_text = text
+        tool_calls_list = OllamaToolCall[]
+        for m in func_calls
+            # Remove function call from content text
+            content_text = replace(content_text, m.match => "", count=1)
+            # Parse function name and parameters
+            func_name = m.captures[1]
+            params_str = m.captures[2]
+            params = try
+                JSON.parse(params_str)
+            catch
+                Dict{String,Any}("raw" => params_str)
+            end
+            push!(tool_calls_list, OllamaToolCall(Dict(
+                "function" => Dict("name" => func_name, "arguments" => params)
+            )))
+        end
+        
+        content_text = strip(content_text)
+        result_dict = Dict{String,Any}("content" => content_text)
+        if !isempty(tool_calls_list)
+            result_dict["tool_calls"] = tool_calls_list
+        end
+        result_dict
     end
-    
+
     content = get(message_data, "content", "")
-    
-    # Parse tool calls from Ollama response into OllamaToolCall
+
+    # Parse tool calls from message_data
+    # If already parsed as OllamaToolCall[] (from XML parsing), use directly
+    # Otherwise parse from JSON dict format
     tool_calls = nothing
     if haskey(message_data, "tool_calls")
         raw_calls = message_data["tool_calls"]
         if isa(raw_calls, Vector) && !isempty(raw_calls)
-            calls = OllamaToolCall[]
-            for tc in raw_calls
-                push!(calls, OllamaToolCall(tc))
+            if raw_calls[1] isa OllamaToolCall
+                tool_calls = raw_calls
+            else
+                calls = OllamaToolCall[]
+                for tc in raw_calls
+                    push!(calls, OllamaToolCall(tc))
+                end
+                tool_calls = calls
             end
-            tool_calls = calls
         end
     end
-    
+
     # Return OllamaMessage (delegate to Ollama provider's message type)
     msg = OllamaMessage(role="assistant", content=content, tool_calls=tool_calls)
     return PeerComputeResponse(msg, model, target_peer, 0, result.status == "success")
