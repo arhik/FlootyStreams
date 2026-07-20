@@ -480,12 +480,12 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
         verified_peers = try; PeerCompute.get_connected_peers(); catch; String[]; end
     end
     
-    # Select peer: prefer one that has the model, skip ourselves
+    # Select peer: prefer one that has the model
     target_peer = nothing
-    
-    # First pass: find a verified remote peer that has the model
+
+    # First pass: find a verified peer that has the model
     for peer_id in verified_peers
-        peer_id == our_id && continue  # never connect to ourselves
+        peer_id == our_id && continue  # skip ourselves by default
         peer_models = try
             result = PeerCompute.get_peer_models(peer_id)
             get(result, "model_names", String[])
@@ -497,14 +497,35 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
             break
         end
     end
-    
-    # Second pass: any verified remote peer (model may not be discovered yet)
+
+    # Second pass: allow ourselves if no other peer has the model (local testing)
+    if target_peer === nothing
+        for peer_id in verified_peers
+            peer_models = try
+                result = PeerCompute.get_peer_models(peer_id)
+                get(result, "model_names", String[])
+            catch
+                String[]
+            end
+            if !isempty(peer_models) && model in peer_models
+                target_peer = peer_id
+                break
+            end
+        end
+    end
+
+    # Third pass: any verified peer
     if target_peer === nothing
         for peer_id in verified_peers
             peer_id == our_id && continue
             target_peer = peer_id
             break
         end
+    end
+
+    # Fourth pass: any peer including ourselves (local testing fallback)
+    if target_peer === nothing && !isempty(verified_peers)
+        target_peer = verified_peers[1]
     end
     
     if target_peer === nothing
