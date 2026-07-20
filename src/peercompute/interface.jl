@@ -508,152 +508,64 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     
     @info "Forwarding inference to peer" peer=target_peer[1:min(20, length(target_peer))] * "..." model=model has_tools=(tools !== nothing && !isempty(tools))
     
-    # ── Step 2: Build request via wrapped provider ──
-    # Delegate message serialization to the wrapped provider (e.g. Ollama).
-    # We serialize messages to Dicts using the wrapped provider's message type,
-    # so tool_calls and tool_call_id are preserved in Ollama wire format.
+    # ── Step 2: Build request using wrapped provider's types ──
+    # Delegate to the wrapped provider (Ollama) for message/tool conversion,
+    # then serialize the ChatRequest to JSON for P2P transport.
     _require_wrapped(provider)
     wrapped = provider.wrapped
 
-    # Convert messages to wire-format Dicts using the wrapped provider's types
-    ollama_messages = Dict{String,Any}[]
-    for m in messages
-        msg_dict = Dict{String,Any}(
-            "role" => FlootyAbstract.role(m),
-            "content" => something(FlootyAbstract.content(m), "")
-        )
-        # Include tool_calls if present (assistant messages with tool calls)
-        tcs = FlootyAbstract.tool_calls(m)
-        if tcs !== nothing && !isempty(tcs)
-            msg_dict["tool_calls"] = [
-                Dict("function" => Dict(
-                    "name" => FlootyAbstract.call_name(tc),
-                    "arguments" => FlootyAbstract.call_arguments(tc)
-                ))
-                for tc in tcs
-            ]
-        end
-        # Include tool_call_id for tool result messages
-        tcid = FlootyAbstract.tool_call_id(m)
-        if tcid !== nothing
-            msg_dict["tool_call_id"] = tcid
-        end
-        push!(ollama_messages, msg_dict)
+    # Convert messages to wrapped provider's type (same as Ollama's create_stream)
+    ollama_messages = [m isa OllamaMessage ? m : OllamaMessage(role=role(m), content=content(m)) for m in messages]
+
+    # Convert tools using build_tool (same as Ollama's chat_stream)
+    ollama_tools = if tools === nothing
+        nothing
+    else
+        map(t -> FlootyAbstract.build_tool(t, wrapped), tools)
     end
 
-    # Build the request dict
-    request = Dict{String,Any}(
-        "model" => model,
-        "messages" => ollama_messages,
-        "stream" => stream
+    # Build ChatRequest using wrapped provider's native type
+    chat_request = ChatRequest(
+        model=model,
+        messages=ollama_messages,
+        stream=stream,
+        format=format,
+        options=options,
+        tools=ollama_tools
     )
 
-    # Add tools if provided — delegate tool building to the wrapped provider
-    if tools !== nothing && !isempty(tools)
-        ollama_tools = map(tools) do t
-            built = FlootyAbstract.build_tool(t, wrapped)
-            # Serialize to Dict{String,Any} for wire transport
-            Dict{String,Any}(
-                "type" => "function",
-                "function" => Dict{String,Any}(
-                    "name" => FlootyAbstract.tool_name(built),
-                    "description" => FlootyAbstract.tool_description(built),
-                    "parameters" => FlootyAbstract.tool_parameters(built)
-                )
-            )
-        end
-        request["tools"] = ollama_tools
-    end
-    
-    # Add options if provided
-    if options !== nothing
-        request["options"] = options
-    end
-    
-    # Add format if provided
-    if format !== nothing
-        request["format"] = format
-    end
-    
+    # Serialize to JSON using JSON3 (Ollama's native serializer)
+    request_json = JSON3.write(chat_request)
+
     # ── Step 3: Send via P2P ──
-    # Serialize to JSON
-    request_json = JSON.json(request)
-    
-    # Send via P2P remote peer's Ollama API
-    # Pass the actual model name, not "ollama"
     result = PeerCompute.send_inference_request(target_peer, model, request_json)
-    
+
     if result.status == "error"
         error("P2P inference failed: $(result.message)")
     end
 
-    # Debug: log the raw P2P response for diagnosis (use @warn since Info is disabled in FlootyCore)
-    @warn "P2P response received" status=result.status message_len=length(result.message) message_preview=result.message[1:min(300, length(result.message))]
-    
-    # result.message is either:
-    # 1. Ollama message JSON: {"role":"assistant","content":"...","tool_calls":[...]}
-    # 2. Plain text with XML function calls (old format): "text\n<function><name>...</name><parameters>...</parameters></function>"
-    message_data = try
-        JSON.parse(result.message)
+    # ── Step 4: Parse response using wrapped provider's types ──
+    # Try to parse as ChatResponse (Ollama's /api/chat format)
+    chat_response = try
+        JSON3.read(result.message, ChatResponse)
     catch
-        # Old format: parse XML function calls from plain text
-        text = result.message
-        # Extract function calls
-        func_pattern = r"<function>\s*<name>(.*?)</name>\s*<parameters>(.*?)</parameters>\s*</function>"
-        func_matches = eachmatch(func_pattern, text)
-        func_calls = [m for m in func_matches]
-        
-        # Extract text content (everything before first function call)
-        content_text = text
-        tool_calls_list = OllamaToolCall[]
-        for m in func_calls
-            # Remove function call from content text
-            content_text = replace(content_text, m.match => "", count=1)
-            # Parse function name and parameters
-            func_name = m.captures[1]
-            params_str = m.captures[2]
-            params = try
-                JSON.parse(params_str)
-            catch
-                Dict{String,Any}("raw" => params_str)
-            end
-            push!(tool_calls_list, OllamaToolCall(Dict(
-                "function" => Dict("name" => func_name, "arguments" => params)
-            )))
+        # Fallback: old /api/generate format with "response" field
+        # Parse as plain text and wrap in a minimal ChatResponse
+        response_text = try
+            parsed = JSON.parse(result.message)
+            get(parsed, "response", result.message)
+        catch
+            result.message
         end
-        
-        content_text = strip(content_text)
-        result_dict = Dict{String,Any}("content" => content_text)
-        if !isempty(tool_calls_list)
-            result_dict["tool_calls"] = tool_calls_list
-        end
-        result_dict
+        ChatResponse(
+            message=OllamaMessage(role="assistant", content=response_text),
+            model=model,
+            done=true
+        )
     end
 
-    content = get(message_data, "content", "")
-
-    # Parse tool calls from message_data
-    # If already parsed as OllamaToolCall[] (from XML parsing), use directly
-    # Otherwise parse from JSON dict format
-    tool_calls = nothing
-    if haskey(message_data, "tool_calls")
-        raw_calls = message_data["tool_calls"]
-        if isa(raw_calls, Vector) && !isempty(raw_calls)
-            if raw_calls[1] isa OllamaToolCall
-                tool_calls = raw_calls
-            else
-                calls = OllamaToolCall[]
-                for tc in raw_calls
-                    push!(calls, OllamaToolCall(tc))
-                end
-                tool_calls = calls
-            end
-        end
-    end
-
-    # Return OllamaMessage (delegate to Ollama provider's message type)
-    msg = OllamaMessage(role="assistant", content=content, tool_calls=tool_calls)
-    return PeerComputeResponse(msg, model, target_peer, 0, result.status == "success")
+    msg = response_message(chat_response)
+    return PeerComputeResponse(msg, model, target_peer, 0, true)
 end
 
 function FlootyAbstract.chat_stream(provider::PeerComputeProvider, model::String, messages::Vector{<:AbstractMessage},
