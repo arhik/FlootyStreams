@@ -359,7 +359,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
 
             @info "Starting PeerCompute peer node on port $(provider.p2p_port)..." bootstrap_count=length(provider.bootstrap_peers)
             PeerCompute.start_daemon(settings)
-            sleep(3)
+            sleep(6)  # Give DHT time to bootstrap and run initial peer search
 
             # Start Julia HTTP inference endpoint (handles Ollama /api/chat calls)
             start_inference_server(provider.api_port)
@@ -374,7 +374,7 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             @info "PeerCompute node started" peer_id=PeerCompute.get_node_id()
 
             # Debug: check peer discovery
-            sleep(2)
+            sleep(5)  # Give DHT rendezvous time to find peers
             connected = PeerCompute.get_connected_peers()
             @info "PeerCompute connected peers" count=length(connected) peers=connected
             verified = PeerCompute.get_verified_peers_by_topic(provider.service_topic)
