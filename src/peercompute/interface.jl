@@ -745,3 +745,16 @@ function _handle_inference_request(http::HTTP.Stream)
         write(http, JSON3.write(Dict("status" => "error", "message" => string(e))))
     end
 end
+
+function stop_inference_server()
+    server = _inference_server[]
+    if server !== nothing
+        try
+            close(server)
+        catch e
+            @warn "Error closing inference server" error=e
+        end
+        _inference_server[] = nothing
+        @info "Inference HTTP server stopped"
+    end
+end
