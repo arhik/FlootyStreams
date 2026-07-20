@@ -558,9 +558,15 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
             result.message
         end
         ChatResponse(
-            message=OllamaMessage(role="assistant", content=response_text),
-            model=model,
-            done=true
+            OllamaMessage(role="assistant", content=response_text),
+            model,
+            nothing,  # created_at
+            true,     # done
+            nothing,  # total_duration
+            nothing,  # load_duration
+            nothing,  # prompt_eval_count
+            nothing,  # eval_count
+            nothing   # eval_duration
         )
     end
 
