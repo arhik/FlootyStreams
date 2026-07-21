@@ -346,6 +346,8 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             end
             enable_mdns = get(config, :enable_mdns, true)
             enable_nat = get(config, :enable_nat, true)
+            enable_relay = get(config, :enable_relay, true)
+            enable_hole_punching = get(config, :enable_hole_punching, true)
 
             settings = PeerCompute.PeerComputeSettings(
                 p2p_port=provider.p2p_port,
@@ -353,6 +355,8 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                 service_topic=provider.service_topic,
                 enable_mdns=enable_mdns,
                 enable_nat=enable_nat,
+                enable_relay=enable_relay,
+                enable_hole_punching=enable_hole_punching,
                 static_key_file=peer_key,
                 bootstrap_peers=provider.bootstrap_peers
             )
