@@ -16,6 +16,7 @@ Future layers:
 
 using PeerCompute
 using JSON
+using Sockets
 # ════════════════════════════════════════════════════════════════════
 # Local Discovery Constants
 # ════════════════════════════════════════════════════════════════════
@@ -689,26 +690,37 @@ function start_inference_server(port::Int)
     end
 
     # Check if port is available first
+    # Note: Windows uses different error messages (e.g. WSAEADDRINUSE) vs POSIX (EADDRINUSE)
     try
         test_sock = Sockets.listen(Sockets.IPv4(127,0,0,1), port)
         close(test_sock)
     catch e
-        if e isa Base.IOError && occursin("EADDRINUSE", string(e))
-            @warn "Inference port $port in use, skipping (another instance is handling it)"
-            return
+        if e isa Base.IOError
+            err_str = string(e)
+            if occursin("EADDRINUSE", err_str) || occursin("WSAEADDRINUSE", err_str) || occursin("address already in use", err_str) || occursin("address in use", err_str)
+                @warn "Inference port $port in use, skipping (another instance is handling it)"
+                return
+            end
         end
+        # Re-throw if it's not an address-in-use error
+        rethrow()
     end
 
     # Use listen! (non-blocking) so we can store the server and close it later
-    server = HTTP.listen!("127.0.0.1", port; reuseaddr=true) do http::HTTP.Stream
-        req = http.message
-        if req.method == "POST" && req.target == "/inference"
-            _handle_inference_request(http)
-        else
-            HTTP.setstatus(http, 404)
-            HTTP.startwrite(http)
-            write(http, "Not found")
+    server = try
+        HTTP.listen!("127.0.0.1", port; reuseaddr=true) do http::HTTP.Stream
+            req = http.message
+            if req.method == "POST" && req.target == "/inference"
+                _handle_inference_request(http)
+            else
+                HTTP.setstatus(http, 404)
+                HTTP.startwrite(http)
+                write(http, "Not found")
+            end
         end
+    catch e
+        @warn "Failed to start inference HTTP server on port $port: $e"
+        return
     end
 
     _inference_server[] = server
