@@ -79,6 +79,30 @@ StructTypes.omitempties(::Type{PeerComputeResponse}) = (:model, :peer_id)
 FlootyAbstract.response_message(response::PeerComputeResponse) = response.message
 
 # ═══════════════════════════════════════════════════════════════════════
+# P2P Inference Response (symmetric wrap/unwrap for P2P transport)
+# ═══════════════════════════════════════════════════════════════════════
+
+"""
+    PeerComputeInferenceResponse
+
+Structured wrapper used by the PeerCompute P2P inference endpoint
+(`_handle_inference_request`) to serialize the wrapped provider's chat
+response. The receiving `create_stream` unwraps it back into the native
+message type (e.g. `OllamaMessage`).
+
+This replaces the fragile pattern of passing raw Ollama `ChatResponse` JSON
+through the P2P layer and hoping `JSON3.read` can deserialize it.
+"""
+struct PeerComputeInferenceResponse
+    status::String
+    message::OllamaMessage
+    model::Union{String, Nothing}
+end
+
+StructTypes.StructType(::Type{PeerComputeInferenceResponse}) = StructTypes.Struct()
+StructTypes.omitempties(::Type{PeerComputeInferenceResponse}) = (:model,)
+
+# ═══════════════════════════════════════════════════════════════════════
 # Model Information
 # ═══════════════════════════════════════════════════════════════════════
 

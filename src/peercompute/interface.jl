@@ -588,32 +588,38 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     end
 
     # ── Step 4: Parse response using wrapped provider's types ──
-    # Try to parse as ChatResponse (Ollama's /api/chat format)
-    chat_response = try
-        JSON3.read(result.message, ChatResponse)
-    catch
-        # Fallback: old /api/generate format with "response" field
-        # Parse as plain text and wrap in a minimal ChatResponse
+    # The remote peer wraps the ChatResponse in a PeerComputeInferenceResponse
+    # (see _handle_inference_request). We unwrap it here with StructTypes.
+    pc_response = try
+        JSON3.read(result.message, PeerComputeInferenceResponse)
+    catch e
+        # Fallback: manually extract content from the raw JSON string.
+        # This handles cases where the remote peer is running an older version
+        # that returns the raw Ollama ChatResponse JSON directly.
+        @warn "Failed to deserialize P2P response as PeerComputeInferenceResponse, falling back to manual unwrap" error=e
+
         response_text = try
             parsed = JSON.parse(result.message)
-            get(parsed, "response", result.message)
+            if haskey(parsed, "message") && parsed["message"] isa Dict
+                # /api/chat format: {"message": {"role": "assistant", "content": "..."}}
+                get(parsed["message"], "content", result.message)
+            elseif haskey(parsed, "response")
+                # /api/generate format: {"response": "..."}
+                parsed["response"]
+            else
+                result.message
+            end
         catch
             result.message
         end
-        ChatResponse(
+        PeerComputeInferenceResponse(
+            "success",
             OllamaMessage(role="assistant", content=response_text),
-            model,
-            nothing,  # created_at
-            true,     # done
-            nothing,  # total_duration
-            nothing,  # load_duration
-            nothing,  # prompt_eval_count
-            nothing,  # eval_count
-            nothing   # eval_duration
+            model
         )
     end
 
-    msg = response_message(chat_response)
+    msg = pc_response.message
     return PeerComputeResponse(msg, model, target_peer)
 end
 
@@ -736,11 +742,21 @@ function _handle_inference_request(http::HTTP.Stream)
             return
         end
 
-        # Return the raw ChatResponse JSON from Ollama
+        # Parse the Ollama ChatResponse and wrap it in a PeerComputeInferenceResponse
+        # so the receiving create_stream can unwrap it with StructTypes instead of
+        # trying to deserialize the raw ChatResponse JSON (which can fail due to
+        # field type mismatches).
+        chat_response = JSON3.read(String(response.body), ChatResponse)
+        pc_response = PeerComputeInferenceResponse(
+            "success",
+            response_message(chat_response),
+            chat_response.model
+        )
+
         HTTP.setstatus(http, 200)
         HTTP.setheader(http, "Content-Type" => "application/json")
         HTTP.startwrite(http)
-        write(http, response.body)
+        write(http, JSON3.write(pc_response))
 
     catch e
         @error "Inference request failed" error=e
