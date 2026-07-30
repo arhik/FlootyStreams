@@ -35,6 +35,35 @@ const DEFAULT_PEER_API_PORT = 9013
 """Path to bootstrap info file (written by bootstrap node, read by peers)"""
 const BOOTSTRAP_INFO_FILE = joinpath(FLOOTY_DIR, "bootstrap_info.json")
 
+# ════════════════════════════════════════════════════════════════════
+# Port Utilities
+# ════════════════════════════════════════════════════════════════════
+
+"""
+    find_free_port(start_port::Int; max_tries::Int=100) -> Int
+
+Try to find a free TCP port starting from `start_port`. Tries up to
+`max_tries` consecutive ports. Returns the first available port, or
+throws if none are found.
+
+This is used to avoid port-in-use errors on Windows (and other
+platforms) where a previous instance may have left a port occupied.
+"""
+function find_free_port(start_port::Int; max_tries::Int=100)
+    for offset in 0:max_tries
+        port = start_port + offset
+        try
+            test_sock = Sockets.listen(Sockets.IPv4(127, 0, 0, 1), port)
+            close(test_sock)
+            return port
+        catch e
+            # Port is in use, try next
+            continue
+        end
+    end
+    error("Could not find a free port starting from $start_port after $max_tries tries")
+end
+
 """Path to the default bootstrap key"""
 const DEFAULT_BOOTSTRAP_KEY = joinpath(FLOOTY_DIR, "bootstrap.key")
 
@@ -287,6 +316,10 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                     @info "Generated bootstrap key: $bootstrap_key"
                 end
 
+                # Find free ports for bootstrap node
+                provider.p2p_port = find_free_port(provider.p2p_port)
+                provider.api_port = find_free_port(provider.api_port)
+
                 @info "Starting PeerCompute bootstrap node on port $(provider.p2p_port)..."
                 PeerCompute.start_bootstrap_node(provider.p2p_port, provider.api_port, bootstrap_key)
                 sleep(2)
@@ -296,8 +329,8 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                 @info "Bootstrap node started" bootstrap_id=bootstrap_id
 
                 # Peer runs on different ports than bootstrap
-                peer_p2p_port = provider.p2p_port + 10
-                peer_api_port = provider.api_port + 10
+                peer_p2p_port = find_free_port(provider.p2p_port + 10)
+                peer_api_port = find_free_port(provider.api_port + 10)
 
                 # Build full bootstrap addresses (add /p2p/<id> if missing)
                 full_bootstrap_addrs = String[]
@@ -349,6 +382,15 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             enable_nat = get(config, :enable_nat, true)
             enable_relay = get(config, :enable_relay, true)
             enable_hole_punching = get(config, :enable_hole_punching, true)
+
+            # Find a free API port before starting the Go node, so the
+            # Go node forwards inference requests to the correct port.
+            # This avoids port-in-use errors on Windows where a previous
+            # instance may have left the port occupied.
+            provider.api_port = find_free_port(provider.api_port)
+            if provider.api_port != DEFAULT_PEER_API_PORT
+                @warn "Default API port was in use, using port $(provider.api_port) instead"
+            end
 
             settings = PeerCompute.PeerComputeSettings(
                 p2p_port=provider.p2p_port,
@@ -656,30 +698,15 @@ FlootyAbstract.create_embedder(provider::PeerComputeProvider, model::String; kwa
 # ═══════════════════════════════════════════════════════════════════════
 
 const _inference_server = Ref{Any}(nothing)
+const _inference_server_port = Ref{Int}(0)
 
 function start_inference_server(port::Int)
     if _inference_server[] !== nothing
         return  # already running
     end
 
-    # Check if port is available first
-    # Note: Windows uses different error messages (e.g. WSAEADDRINUSE) vs POSIX (EADDRINUSE)
-    try
-        test_sock = Sockets.listen(Sockets.IPv4(127,0,0,1), port)
-        close(test_sock)
-    catch e
-        if e isa Base.IOError
-            err_str = string(e)
-            if occursin("EADDRINUSE", err_str) || occursin("WSAEADDRINUSE", err_str) || occursin("address already in use", err_str) || occursin("address in use", err_str)
-                @warn "Inference port $port in use, skipping (another instance is handling it)"
-                return
-            end
-        end
-        # Re-throw if it's not an address-in-use error
-        rethrow()
-    end
-
     # Use listen! (non-blocking) so we can store the server and close it later
+    # Port should already be verified free by caller via find_free_port
     server = try
         HTTP.listen!("127.0.0.1", port; reuseaddr=true) do http::HTTP.Stream
             req = http.message
@@ -697,6 +724,7 @@ function start_inference_server(port::Int)
     end
 
     _inference_server[] = server
+    _inference_server_port[] = port
     @info "Inference HTTP server started on port $port"
     sleep(0.5)  # give it a moment to start
 end
