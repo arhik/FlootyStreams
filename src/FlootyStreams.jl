@@ -47,7 +47,6 @@ export ChutesProvider
 export PeerComputeProvider, PeerComputeModel, PeerComputeResponse
 # export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
-export set_inference_api_url
 export GLOBAL_PROVIDER, GLOBAL_BARELIBP2P_PROVIDER
 # export GLOBAL_BARELIBP2P_PROVIDER
 export AbstractFlootyError, ToolError
