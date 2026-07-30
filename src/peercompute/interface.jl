@@ -17,6 +17,7 @@ Future layers:
 using PeerCompute
 using JSON
 using Sockets
+using NamedPorts
 # ════════════════════════════════════════════════════════════════════
 # Local Discovery Constants
 # ════════════════════════════════════════════════════════════════════
@@ -46,19 +47,15 @@ Try to find a free TCP port starting from `start_port`. Tries up to
 `max_tries` consecutive ports. Returns the first available port, or
 throws if none are found.
 
-This is used to avoid port-in-use errors on Windows (and other
-platforms) where a previous instance may have left a port occupied.
+Uses NamedPorts.is_port_available for cross-platform port checking.
+This avoids port-in-use errors on Windows (and other platforms) where
+a previous instance may have left a port occupied.
 """
 function find_free_port(start_port::Int; max_tries::Int=100)
     for offset in 0:max_tries
         port = start_port + offset
-        try
-            test_sock = Sockets.listen(Sockets.IPv4(127, 0, 0, 1), port)
-            close(test_sock)
+        if NamedPorts.is_port_available(port)
             return port
-        catch e
-            # Port is in use, try next
-            continue
         end
     end
     error("Could not find a free port starting from $start_port after $max_tries tries")

@@ -12,6 +12,7 @@ HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
 IOCapture = "b5f81e59-6552-4d32-b1f0-c071b021bf89"
 JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 JSON3 = "0f8b85d8-7281-11e9-16c2-39a750bddbf1"
+NamedPorts = "e0f0ccce-b71f-4aa2-813c-7b03f6beb6e8"
 OrderedCollections = "bac558e1-5e72-5ebc-8fee-abe8a469f55d"
 PeerCompute = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
 SHA = "ea8e919c-243c-51af-8825-aaa63cd721ce"
@@ -23,6 +24,7 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 FlootyAbstract = {path = "../FlootyAbstract"}
 FlootyBase = {path = "../FlootyBase"}
 PeerCompute = {path = "../PeerCompute"}
+NamedPorts = {path = "../NamedPorts"}
 
 [compat]
 Base64 = "1.11.0"
