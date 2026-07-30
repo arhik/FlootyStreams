@@ -596,7 +596,7 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     catch e
         # Fallback: manually extract content from the raw JSON string.
         # This handles cases where the remote peer is running an older version
-        # that returns the raw Ollama ChatResponse JSON directly.
+        # that returns a different response format.
         @warn "Failed to deserialize P2P response as PeerComputeInferenceResponse, falling back to manual unwrap" error=e
 
         response_text = try
@@ -604,6 +604,17 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
             if haskey(parsed, "message") && parsed["message"] isa Dict
                 # /api/chat format: {"message": {"role": "assistant", "content": "..."}}
                 get(parsed["message"], "content", result.message)
+            elseif haskey(parsed, "message") && parsed["message"] isa String
+                # InferenceResponse format: {"message": "<JSON string>", "model": "...", ...}
+                # The message field is a JSON-encoded OllamaMessage or ChatResponse
+                inner = JSON.parse(parsed["message"])
+                if inner isa Dict && haskey(inner, "content")
+                    inner["content"]
+                elseif inner isa Dict && haskey(inner, "message") && inner["message"] isa Dict
+                    get(inner["message"], "content", parsed["message"])
+                else
+                    parsed["message"]
+                end
             elseif haskey(parsed, "response")
                 # /api/generate format: {"response": "..."}
                 parsed["response"]
