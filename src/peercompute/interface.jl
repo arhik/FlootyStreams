@@ -16,8 +16,6 @@ Future layers:
 
 using PeerCompute
 using JSON
-using Sockets
-using NamedPorts
 # ════════════════════════════════════════════════════════════════════
 # Local Discovery Constants
 # ════════════════════════════════════════════════════════════════════
@@ -35,31 +33,6 @@ const DEFAULT_PEER_API_PORT = 9013
 
 """Path to bootstrap info file (written by bootstrap node, read by peers)"""
 const BOOTSTRAP_INFO_FILE = joinpath(FLOOTY_DIR, "bootstrap_info.json")
-
-# ════════════════════════════════════════════════════════════════════
-# Port Utilities
-# ════════════════════════════════════════════════════════════════════
-
-"""
-    find_free_port(start_port::Int; max_tries::Int=100) -> Int
-
-Try to find a free TCP port starting from `start_port`. Tries up to
-`max_tries` consecutive ports. Returns the first available port, or
-throws if none are found.
-
-Uses NamedPorts.is_port_available for cross-platform port checking.
-This avoids port-in-use errors on Windows (and other platforms) where
-a previous instance may have left a port occupied.
-"""
-function find_free_port(start_port::Int; max_tries::Int=100)
-    for offset in 0:max_tries
-        port = start_port + offset
-        if NamedPorts.is_port_available(port)
-            return port
-        end
-    end
-    error("Could not find a free port starting from $start_port after $max_tries tries")
-end
 
 """Path to the default bootstrap key"""
 const DEFAULT_BOOTSTRAP_KEY = joinpath(FLOOTY_DIR, "bootstrap.key")
@@ -313,9 +286,11 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                     @info "Generated bootstrap key: $bootstrap_key"
                 end
 
-                # Find free ports for bootstrap node
-                provider.p2p_port = find_free_port(provider.p2p_port)
-                provider.api_port = find_free_port(provider.api_port)
+                # Ports should be pre-allocated by FlootyCore (daemon) via NamedPorts.
+                # Verify ports are set before starting.
+                if provider.p2p_port == 0 || provider.api_port == 0
+                    error("Ports not set. FlootyCore should allocate ports via NamedPorts before calling start_provider.")
+                end
 
                 @info "Starting PeerCompute bootstrap node on port $(provider.p2p_port)..."
                 PeerCompute.start_bootstrap_node(provider.p2p_port, provider.api_port, bootstrap_key)
@@ -326,8 +301,8 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
                 @info "Bootstrap node started" bootstrap_id=bootstrap_id
 
                 # Peer runs on different ports than bootstrap
-                peer_p2p_port = find_free_port(provider.p2p_port + 10)
-                peer_api_port = find_free_port(provider.api_port + 10)
+                peer_p2p_port = provider.p2p_port + 10
+                peer_api_port = provider.api_port + 10
 
                 # Build full bootstrap addresses (add /p2p/<id> if missing)
                 full_bootstrap_addrs = String[]
@@ -380,13 +355,10 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             enable_relay = get(config, :enable_relay, true)
             enable_hole_punching = get(config, :enable_hole_punching, true)
 
-            # Find a free API port before starting the Go node, so the
-            # Go node forwards inference requests to the correct port.
-            # This avoids port-in-use errors on Windows where a previous
-            # instance may have left the port occupied.
-            provider.api_port = find_free_port(provider.api_port)
-            if provider.api_port != DEFAULT_PEER_API_PORT
-                @warn "Default API port was in use, using port $(provider.api_port) instead"
+            # Ports should be pre-allocated by FlootyCore (daemon) via NamedPorts.
+            # If ports are not set (0 or default), verify they're usable.
+            if provider.api_port == 0
+                error("API port not set. FlootyCore should allocate ports via NamedPorts before calling start_provider.")
             end
 
             settings = PeerCompute.PeerComputeSettings(
@@ -702,8 +674,7 @@ function start_inference_server(port::Int)
         return  # already running
     end
 
-    # Use listen! (non-blocking) so we can store the server and close it later
-    # Port should already be verified free by caller via find_free_port
+    # Port should already be allocated by FlootyCore via NamedPorts
     server = try
         HTTP.listen!("127.0.0.1", port; reuseaddr=true) do http::HTTP.Stream
             req = http.message
