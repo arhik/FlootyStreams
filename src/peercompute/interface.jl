@@ -253,6 +253,19 @@ function FlootyAbstract.create_provider_instance(::Val{:peercompute}; config::Di
 end
 
 """
+    set_inference_api_url(url::String)
+
+Set the API URL that the Go P2P node uses for forwarding inference requests.
+This allows the Go node to forward to a NamedPorts proxy URL instead of a raw port.
+
+Called by FlootyCore after starting the PeerCompute node to configure
+NamedPorts-based forwarding.
+"""
+function set_inference_api_url(url::String)
+    return PeerCompute.set_api_url(url)
+end
+
+"""
     start_provider(provider::PeerComputeProvider; config=Dict())
 
 Start the PeerCompute P2P node.
