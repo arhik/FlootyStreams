@@ -591,45 +591,7 @@ function FlootyAbstract.create_stream(provider::PeerComputeProvider, model::Stri
     # ── Step 4: Parse response using wrapped provider's types ──
     # The remote peer wraps the ChatResponse in a PeerComputeInferenceResponse
     # (see _handle_inference_request). We unwrap it here with StructTypes.
-    pc_response = try
-        JSON3.read(result.message, PeerComputeInferenceResponse)
-    catch e
-        # Fallback: manually extract content from the raw JSON string.
-        # This handles cases where the remote peer is running an older version
-        # that returns a different response format.
-        @warn "Failed to deserialize P2P response as PeerComputeInferenceResponse, falling back to manual unwrap" error=e
-
-        response_text = try
-            parsed = JSON.parse(result.message)
-            if haskey(parsed, "message") && parsed["message"] isa Dict
-                # /api/chat format: {"message": {"role": "assistant", "content": "..."}}
-                get(parsed["message"], "content", result.message)
-            elseif haskey(parsed, "message") && parsed["message"] isa String
-                # InferenceResponse format: {"message": "<JSON string>", "model": "...", ...}
-                # The message field is a JSON-encoded OllamaMessage or ChatResponse
-                inner = JSON.parse(parsed["message"])
-                if inner isa Dict && haskey(inner, "content")
-                    inner["content"]
-                elseif inner isa Dict && haskey(inner, "message") && inner["message"] isa Dict
-                    get(inner["message"], "content", parsed["message"])
-                else
-                    parsed["message"]
-                end
-            elseif haskey(parsed, "response")
-                # /api/generate format: {"response": "..."}
-                parsed["response"]
-            else
-                result.message
-            end
-        catch
-            result.message
-        end
-        PeerComputeInferenceResponse(
-            "success",
-            OllamaMessage(role="assistant", content=response_text),
-            model
-        )
-    end
+    pc_response = JSON3.read(result.message, PeerComputeInferenceResponse)
 
     msg = pc_response.message
     return PeerComputeResponse(msg, model, target_peer)
