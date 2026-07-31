@@ -451,32 +451,44 @@ FlootyAbstract.provider_name(provider::PeerComputeProvider) = :peercompute
 
 function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{Symbol,Any})
     models = PeerComputeModel[]
-    
-    # Get verified peers (the reliable discovery mechanism)
+
     topic = if GLOBAL_PROVIDER[] !== nothing
         GLOBAL_PROVIDER[].service_topic
     else
         get(config, :service_topic, "peercompute-nodes-v1")
     end
-    verified = try PeerCompute.get_verified_peers_by_topic(topic); catch; String[]; end
     our_id = try PeerCompute.get_node_id(); catch; ""; end
-    
+
+    # Use pre-collected discovered nodes (Go side queries model list on verification)
+    discovered = try PeerCompute.get_discovered_nodes(); catch; Dict{String,Any}(); end
+
+    # Primary: use pre-collected model lists from discovered peers
+    for (peer_id, info) in discovered
+        peer_id == our_id && continue
+        peer_models = get(info, "model_names", String[])
+        for model_name in peer_models
+            push!(models, PeerComputeModel(name=model_name, peer_id=peer_id))
+        end
+    end
+
+    # Fallback: for verified peers not yet in discovered list, query individually
+    verified = try PeerCompute.get_verified_peers_by_topic(topic); catch; String[]; end
     for peer_id in verified
-        peer_id == our_id && continue  # skip ourselves
-        
-        # Query each verified peer for its model list
+        peer_id == our_id && continue
+        peer_id in keys(discovered) && continue  # already handled above
+
+        # Query for model list (may not be pre-collected yet)
         peer_models = try
             result = PeerCompute.get_peer_models(peer_id)
             get(result, "model_names", String[])
         catch
             String[]
         end
-        
         for model_name in peer_models
             push!(models, PeerComputeModel(name=model_name, peer_id=peer_id))
         end
     end
-    
+
     return models
 end
 
