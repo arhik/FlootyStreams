@@ -5,6 +5,9 @@ using FlootyBase
 using StructTypes
 using PeerCompute
 
+# Model cache utility (for all providers — Ollama, OpenAI, Chutes, PeerCompute)
+include("model_cache.jl")
+
 # Ollama
 include("ollama/types.jl")
 include("ollama/tools.jl")
@@ -47,6 +50,7 @@ export ChutesProvider
 export PeerComputeProvider, PeerComputeModel, PeerComputeResponse
 # export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
+export get_cached_models, cache_models, invalidate_model_cache, clear_model_cache, DEFAULT_CACHE_TTL
 export GLOBAL_PROVIDER, GLOBAL_BARELIBP2P_PROVIDER
 # export GLOBAL_BARELIBP2P_PROVIDER
 export AbstractFlootyError, ToolError

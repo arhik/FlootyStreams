@@ -27,9 +27,22 @@ FlootyAbstract.provider_name(provider::OllamaProvider) = :ollama
 function FlootyAbstract.list_provider_models(::Val{:ollama}, config::Dict{Symbol,Any})
     baseURL = get(config, :baseURL, "http://localhost:11434")
     timeout = get(config, :timeout, 120)
+    ttl = get(config, :cache_ttl, DEFAULT_CACHE_TTL)
+
+    # Use cached model list if available
+    cache_key = "ollama:$baseURL:$timeout"
+    cached, hit = get_cached_models(cache_key, ttl)
+    if hit
+        return cached
+    end
+
+    # Fetch fresh models
     provider = OllamaProvider(; baseURL=baseURL, timeout=timeout)
     response = list(provider)
-    return response.models
+    models = response.models
+
+    cache_models(cache_key, models)
+    return models
 end
 
 FlootyAbstract.create_embedder(provider::OllamaProvider, model::String; kwargs...) =

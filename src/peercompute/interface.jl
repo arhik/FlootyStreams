@@ -397,6 +397,9 @@ function start_provider(provider::PeerComputeProvider; config::Dict{Symbol,Any}=
             if !isempty(models)
                 PeerCompute.announce_models(models)
                 @info "Announced $(length(models)) models"
+                # Invalidate cache so other providers querying PeerCompute
+                # see the updated model list immediately
+                invalidate_model_cache("peercompute:$(provider.p2p_port):$(provider.api_port)")
             end
 
             provider.node_running = true
@@ -459,6 +462,15 @@ function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{S
     end
     our_id = try PeerCompute.get_node_id(); catch; ""; end
 
+    # Use cached model list if available and fresh
+    provider = GLOBAL_PROVIDER[]
+    cache_key = "peercompute:$(provider !== nothing ? provider.p2p_port : 0):$(provider !== nothing ? provider.api_port : 0)"
+    ttl = get(config, :cache_ttl, DEFAULT_CACHE_TTL)
+    cached, hit = get_cached_models(cache_key, ttl)
+    if hit
+        return cached
+    end
+
     # Use pre-collected discovered nodes (Go side queries model list on verification)
     discovered = try PeerCompute.get_discovered_nodes(); catch; Dict{String,Any}(); end
 
@@ -477,7 +489,6 @@ function FlootyAbstract.list_provider_models(::Val{:peercompute}, config::Dict{S
         peer_id == our_id && continue
         peer_id in keys(discovered) && continue  # already handled above
 
-        # Query for model list (may not be pre-collected yet)
         peer_models = try
             result = PeerCompute.get_peer_models(peer_id)
             get(result, "model_names", String[])

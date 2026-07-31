@@ -69,8 +69,20 @@ function FlootyAbstract.list_provider_models(::Val{:openai}, config::Dict{Symbol
     baseURL = get(config, :baseURL, "https://api.openai.com/v1")
     apiKey = get(config, :apiKey, "")
     timeout = get(config, :timeout, 120)
+    ttl = get(config, :cache_ttl, DEFAULT_CACHE_TTL)
+
+    # Use cached model list if available
+    cache_key = "openai:$(baseURL):$(length(apiKey))"
+    cached, hit = get_cached_models(cache_key, ttl)
+    if hit
+        return cached
+    end
+
+    # Fetch fresh models
     provider = OpenAIProvider(; baseURL=baseURL, apiKey=apiKey, timeout=timeout)
     models = list(provider)
+
+    cache_models(cache_key, models)
     return models
 end
 

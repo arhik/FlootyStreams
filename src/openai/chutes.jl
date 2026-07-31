@@ -28,8 +28,20 @@ function FlootyAbstract.list_provider_models(::Val{:chutes}, config::Dict{Symbol
     baseURL = get(config, :baseURL, "https://llm.chutes.ai")
     apiKey = get(config, :apiKey, "")
     timeout = get(config, :timeout, 120)
+    ttl = get(config, :cache_ttl, DEFAULT_CACHE_TTL)
+
+    # Use cached model list if available
+    cache_key = "chutes:$(baseURL):$(length(apiKey))"
+    cached, hit = get_cached_models(cache_key, ttl)
+    if hit
+        return cached
+    end
+
+    # Fetch fresh models
     provider = ChutesProvider(; baseURL=baseURL, apiKey=apiKey, timeout=timeout)
     models = list(provider)
+
+    cache_models(cache_key, models)
     return models
 end
 
