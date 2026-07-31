@@ -10,8 +10,7 @@
 # This mirrors the PeerCompute approach: pre-collected data is the
 # primary source, with on-demand fetches as fallback.
 
-using Base: ReentrantLock
-import Base.time
+using Base: ReentrantLock, time, lock, haskey, delete!, empty!
 
 const DEFAULT_CACHE_TTL = 60  # seconds
 
@@ -60,7 +59,7 @@ Remove a specific cache entry (use when models change externally).
 """
 function invalidate_model_cache(key::String)
     lock(MODEL_CACHE_LOCK) do
-        delete!(MODEL_CACHE, key)
+        Base.delete!(MODEL_CACHE, key)
     end
 end
 
@@ -71,6 +70,6 @@ Clear all cached model lists (use e.g. on shutdown or config reload).
 """
 function clear_model_cache()
     lock(MODEL_CACHE_LOCK) do
-        empty!(MODEL_CACHE)
+        Base.empty!(MODEL_CACHE)
     end
 end
