@@ -9,7 +9,10 @@ function _request(provider::OllamaProvider, method::String, endpoint::String, bo
     try
         if stream
             return Channel(Inf) do channel
-                HTTP.open(method, url, headers=headers) do jsonstream
+                # readtimeout: a stream that stops sending must FAIL instead of
+                # blocking the caller forever (the app's agent loop hangs on it).
+                HTTP.open(method, url, headers=headers,
+                          readtimeout=provider.timeout) do jsonstream
                     write(jsonstream, JSON3.write(body))
                     closewrite(jsonstream)
                     r = startread(jsonstream)
