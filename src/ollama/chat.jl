@@ -224,7 +224,7 @@ end
 
 function show(provider::OllamaProvider, model::String)
     try
-        return _request(provider, "POST", "/api/show", Dict("name" => model))
+        return _request(provider, "POST", "/api/show", Dict("model" => model))
     catch e
         rethrow(e)
     end

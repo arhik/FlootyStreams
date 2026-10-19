@@ -13,6 +13,7 @@ include("ollama/types.jl")
 include("ollama/tools.jl")
 include("ollama/websearch.jl")
 include("ollama/chat.jl")
+include("ollama/decision.jl")
 include("ollama/utils.jl")
 include("ollama/interface.jl")
 
@@ -40,8 +41,12 @@ include("peercompute/interface.jl")
 const GLOBAL_BARELIBP2P_PROVIDER = Ref{Union{Nothing, Any}}(nothing)
 
 export create_stream
-export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, OllamaProvider
+export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, ImageData, OllamaProvider
 export OllamaModel
+export SystemOneRequest, SystemOneResponse, SystemOneUsage
+export SystemOneQuestion, SystemOneChoiceQuestion, SystemOneNoulQuestion, SystemOneScoreQuestion
+export SystemOneAnswer, SystemOneChoiceAnswer, SystemOneNoulAnswer, SystemOneScoreAnswer
+export systemone, has_capability, is_decision_model, model_capabilities
 export WebSearchResult, WebSearchResponse, WebFetchResponse, OllamaWebSearchProvider
 export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
 export OpenAIModel

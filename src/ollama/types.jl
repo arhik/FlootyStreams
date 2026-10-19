@@ -253,10 +253,11 @@ StructTypes.omitempties(::Type{ModelDetails}) = (:families,)
     details::ModelDetails
     remote_model::Union{String, Nothing} = nothing
     remote_host::Union{String, Nothing} = nothing
+    capabilities::Union{Vector{Symbol}, Nothing} = nothing
 end
 
 StructTypes.StructType(::Type{OllamaModel}) = StructTypes.Struct()
-StructTypes.omitempties(::Type{OllamaModel}) = (:remote_model, :remote_host)
+StructTypes.omitempties(::Type{OllamaModel}) = (:capabilities, :remote_model, :remote_host)
 
 FlootyAbstract.model_name(model::OllamaModel) = model.name
 FlootyAbstract.model_provider(model::OllamaModel) = :ollama
