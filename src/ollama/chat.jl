@@ -76,7 +76,7 @@ end
 function chat(provider::OllamaProvider, messages::Vector{OllamaMessage},
               model::String,
               stream::Bool=false,
-              format::Union{Nothing, OrderedDict}=nothing,
+              format::Union{Nothing, String, OrderedDict}=nothing,
               options::Union{Nothing, Dict{String,Any}}=nothing,
               tools::Union{Vector{OllamaTool}, Nothing}=nothing
 )

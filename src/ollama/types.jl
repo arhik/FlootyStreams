@@ -172,7 +172,7 @@ StructTypes.omitempties(::Type{GenerateRequest}) = (:prompt, :system, :template,
     model::String = "llama3.2"
     messages::Vector{OllamaMessage} = []
     stream::Bool = false
-    format::Union{OrderedDict, Nothing} = nothing
+    format::Union{String, OrderedDict, Nothing} = nothing
     options::Union{Dict{String,Any}, Nothing} = nothing
     tools::Union{Vector{OllamaTool}, Nothing} = nothing
 end
