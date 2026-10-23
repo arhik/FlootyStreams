@@ -7,7 +7,7 @@
 #   - Subsequent calls within TTL return cached data immediately
 #   - After TTL expires, fetches fresh models
 #
-# This mirrors the PeerCompute approach: pre-collected data is the
+# This uses: pre-collected data is the
 # primary source, with on-demand fetches as fallback.
 
 using Base: ReentrantLock, time, lock, haskey, delete!, empty!

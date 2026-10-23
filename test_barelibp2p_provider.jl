@@ -15,7 +15,7 @@ println("Test 1: Create BareLibP2P provider")
 provider = BareLibP2PProvider(
     p2p_port = 4001,
     api_port = 5001,
-    service_topic = "peercompute-test-v1",
+    service_topic = "barelibp2p-test-v1",
     bootstrap_peers = String[]
 )
 println("✓ Created provider:")

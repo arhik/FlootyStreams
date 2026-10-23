@@ -3,9 +3,8 @@ module FlootyStreams
 using FlootyAbstract
 using FlootyBase
 using StructTypes
-using PeerCompute
 
-# Model cache utility (for all providers — Ollama, OpenAI, Chutes, PeerCompute)
+# Model cache utility (for all providers)
 include("model_cache.jl")
 
 # Ollama
@@ -26,10 +25,6 @@ include("openai/interface.jl")
 
 # Chutes (OpenAI-compatible)
 include("openai/chutes.jl")
-
-# PeerCompute P2P (libp2p-go)
-include("peercompute/types.jl")
-include("peercompute/interface.jl")
 
 # BareLibP2P P2P (pure Julia) — temporarily excluded for independent development
 # using BareLibP2P
@@ -52,7 +47,6 @@ export OpenAIMessage, OpenAIError, OpenAITool, OpenAIToolCall, OpenAIProvider
 export OpenAIModel
 export OpenAIFunction, OpenAITextContent, OpenAIImageContent, OpenAIImageUrl
 export ChutesProvider
-export PeerComputeProvider, PeerComputeModel, PeerComputeResponse
 # export BareLibP2PProvider, BareLibP2PModel, BareLibP2PInferenceResponse
 export start_provider, stop_provider
 export get_cached_models, cache_models, invalidate_model_cache, clear_model_cache, DEFAULT_CACHE_TTL
@@ -69,7 +63,6 @@ function __init__()
     # BareLibP2P uses OllamaMessage directly, no separate registration needed
     FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
     FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)
-    FlootyBase.register_model_subtype!(:PeerComputeModel, PeerComputeModel)
     # FlootyBase.register_model_subtype!(:BareLibP2PModel, BareLibP2PModel)
 end
 

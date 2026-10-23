@@ -69,7 +69,7 @@ end
 StructTypes.StructType(::Type{OllamaToolCall}) = StructTypes.Struct()
 StructTypes.names(::Type{OllamaToolCall}) = ((:function_, :function),)
     
-    # Constructor from Dict (e.g., from JSON.parse in PeerCompute)
+    # Constructor from Dict (e.g., from JSON.parse)
     function OllamaToolCall(data::Dict)
         func_data = get(data, "function", data)
         name = get(func_data, "name", "unknown")
