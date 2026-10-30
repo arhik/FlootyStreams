@@ -313,3 +313,7 @@ struct WebFetchResponse <: OllamaResponse
 end
 
 StructTypes.StructType(::Type{WebFetchResponse}) = StructTypes.Struct()
+
+
+# LlamaCpp provider: FlootyHub is Ollama-compatible, so reuse OllamaProvider.
+const LlamaCppProvider = OllamaProvider
