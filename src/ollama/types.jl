@@ -317,3 +317,15 @@ StructTypes.StructType(::Type{WebFetchResponse}) = StructTypes.Struct()
 
 # LlamaCpp provider: FlootyHub is Ollama-compatible, so reuse OllamaProvider.
 const LlamaCppProvider = OllamaProvider
+
+# LlamaCpp (FlootyHub) base URL registry. FlootyHub sets this when it serves;
+# Flooty reads it via create_provider_instance(:llamacpp) without importing
+# FlootyHub (avoids circular dependency).
+const LLAMACPP_BASE_URL = Ref{String}("http://localhost:11434")
+function set_llamacpp_base_url!(url::AbstractString)
+    s = String(url)
+    endswith(s, "/") && (s = chop(s))
+    endswith(s, "/v1") && (s = s[1:end-3])
+    LLAMACPP_BASE_URL[] = s
+    return s
+end

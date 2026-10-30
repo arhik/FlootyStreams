@@ -36,7 +36,7 @@ include("flootycompute/types.jl")
 include("flootycompute/interface.jl")
 
 export create_stream
-export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, ImageData, OllamaProvider, LlamaCppProvider
+export OllamaMessage, OllamaError, OllamaTool, OllamaToolCall, ImageAttachment, ImageData, OllamaProvider, LlamaCppProvider, LLAMACPP_BASE_URL, set_llamacpp_base_url!
 export OllamaModel
 export OllamaSpeechResponse
 export SystemOneRequest, SystemOneResponse, SystemOneUsage

@@ -76,4 +76,4 @@ function FlootyAbstract.chat_stream(provider::OllamaProvider, model::String, mes
     chat(provider, ollama_messages, model, stream, format, options, ollama_tools)
 end
 
-FlootyAbstract.create_provider_instance(::Val{:llamacpp}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = LlamaCppProvider()
+FlootyAbstract.create_provider_instance(::Val{:llamacpp}; config::Dict{Symbol, Any} = Dict{Symbol, Any}()) = LlamaCppProvider(baseURL = LLAMACPP_BASE_URL[])
