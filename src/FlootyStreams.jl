@@ -60,6 +60,8 @@ function __init__()
     FlootyBase.register_model_subtype!(:OllamaModel, OllamaModel)
     FlootyBase.register_model_subtype!(:OpenAIModel, OpenAIModel)
     FlootyBase.register_model_subtype!(:FlootyComputeModel, FlootyComputeModel)
+    url = strip(get(ENV, "FLOOTYHUB_URL", ""))
+    isempty(url) || set_llamacpp_base_url!(url)
 end
 
 
